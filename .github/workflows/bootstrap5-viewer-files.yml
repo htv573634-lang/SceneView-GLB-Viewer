@@ -1,0 +1,48 @@
+name: Bootstrap 5 - GLB Viewer Files
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone SceneView
+        run: |
+          git clone --depth 1 --branch v4.37.0 https://github.com/SceneView/sceneview.git
+          cd sceneview
+
+      - name: List only viewer Kotlin files
+        run: |
+          cd sceneview
+
+          echo "================ GLB VIEWER FILES ================"
+
+          find samples/android-demo/src/main/java/io/github/sceneview/demo \
+            \( -path "*/ui/viewer/*" \
+            -o -name "ModelViewerDemo.kt" \
+            -o -name "DemoScaffold.kt" \
+            -o -name "DemoSettings.kt" \
+            -o -name "SceneViewTokens.kt" \
+            -o -name "DemoMath.kt" \) \
+            | sort
+
+          echo
+          echo "================ CORE FILES ================"
+
+          find sceneview/src/main/java/io/github/sceneview \
+            \( -name "SceneView.kt" -o -path "*/environment/*" \) \
+            | sort
+
+          echo
+          echo "================ SCENEVIEW-CORE FILES ================"
+
+          find sceneview-core/src/commonMain/kotlin/io/github/sceneview/core \
+            -name "ModelUnitGuess.kt" | sort
+
+          echo
+          echo "================ COMMON UI ================"
+
+          find samples/common/src/main/java/io/github/sceneview/sample/ui \
+            -name "LabeledSlider.kt"
