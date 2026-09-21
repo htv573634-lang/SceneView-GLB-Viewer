@@ -27,61 +27,14 @@ plugins {
 // files. `./gradlew apiDump` regenerates them; `./gradlew apiCheck` (blocking
 // in ci.yml, same tier as the unit tests) fails a PR whose compiled public
 // surface no longer matches its committed dump — so a public signature change
-// is an intentional, reviewable diff. For the AI-first SDK this guards the
-// exact signatures that `llms.txt` promises against silent drift.
+// is an intentional, reviewable diff.
 apiValidation {
-    // Validate ONLY the four published library modules: sceneview,
-    // arsceneview (Android libraries), sceneview-core and sceneview-compose
-    // (KMP). Everything else is ignored by project name:
+    // Validate ONLY the published library modules: sceneview and sceneview-core.
+    // Everything else is ignored by project name:
     ignoredProjects += [
-        // Samples / demo apps — not published, no API contract.
+        // Common utilities / samples — not published, no API contract.
         "common",
-        "android-demo",
-        "android-tv-demo",
-        "desktop-demo",
-        // sceneview-web is a JS-only KMP module published to npm, not Maven.
-        // Its single `js(IR)` target has no JVM/bytecode surface for the
-        // (JVM-based) validator to dump, and klib ABI validation is left
-        // disabled (see below). Its public API is only documented by the
-        // hand-written sceneview-web.d.ts — no automated JS ABI gate exists
-        // yet (shortlist #2642 item 12), so web API drift is NOT caught here.
-        "sceneview-web",
-        // Doc-snippet compile guard (#2759) — generated sources, never
-        // published, no API contract of its own.
-        "snippets-check",
     ]
-
-    // Klib (Kotlin/Native + JS) ABI validation stays DISABLED (the default).
-    // It is still experimental and, crucially, the iOS native klibs cannot be
-    // built on the ubuntu-latest CI runner that hosts `apiCheck`. sceneview-core
-    // is a KMP module, but its `jvm("android")` target dump already captures the
-    // whole shared commonMain public API, so the common surface is covered.
-    // Enabling klib validation is tracked as a follow-up once it stabilises and
-    // a macOS CI leg hosts it. (Equivalent: `klib { enabled = false }`.)
-}
-
-// Force patched versions of transitive npm dependencies (Dependabot security alerts)
-plugins.withType(org.jetbrains.kotlin.gradle.targets.js.yarn.YarnPlugin) {
-    extensions.getByType(org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootExtension).tap {
-        resolution("serialize-javascript", ">=7.0.3")
-        // webpack 5.107.0 moved `lib/ModuleNotFoundError.js` →
-        // `lib/errors/ModuleNotFoundError.js`. `kotlin-web-helpers` (bundled
-        // with the Kotlin/JS Gradle plugin) still does:
-        //   require("webpack/lib/ModuleNotFoundError")
-        // in `dist/tc-log-error-webpack.js`, so every webpack-driven task
-        // crashes with `Cannot find module 'webpack/lib/ModuleNotFoundError'`
-        // — and karma surfaces it as a confusing top-of-stack `karma/bin/karma`
-        // line (see #1785). Covers:
-        //   • :sceneview-web:jsBrowserProductionWebpack (sceneview-web npm
-        //     publish — original repro that motivated #1791)
-        //   • :sceneview-web:jsBrowserDistribution
-        //   • :sceneview-web:jsTest (karma → webpack preprocessor)
-        // Cap at <5.107.0 until kotlin-web-helpers ships a fix.
-        resolution("webpack", ">=5.104.1 <5.107.0")
-        resolution("webpack-dev-server", ">=5.2.1")
-        resolution("path-to-regexp", ">=0.2.2")
-        resolution("brace-expansion", ">=1.1.13")
-    }
 }
 
 subprojects {
