@@ -1,45 +1,49 @@
-name: Bootstrap 2 - Extract Android Demo
+name: Bootstrap 3 - Needed Files Only
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  extract:
+  analyze:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout our repo
-        uses: actions/checkout@v4
-
-      - name: Clone official SceneView
+      - name: Clone SceneView
         run: |
-          git clone \
-            --depth 1 \
-            --branch v4.37.0 \
-            https://github.com/SceneView/sceneview.git \
-            sceneview
+          git clone --depth 1 https://github.com/SceneView/sceneview.git sceneview
 
-      - name: Extract Android Demo
+      - name: Show only required files
         run: |
-          mkdir -p export
-          cp -R sceneview/samples/android-demo export/app
+          cd sceneview
 
-          cp sceneview/settings.gradle.kts export/ || true
-          cp sceneview/build.gradle.kts export/ || true
-          cp sceneview/gradle.properties export/ || true
-          cp sceneview/gradlew export/ || true
-          cp -R sceneview/gradle export/ || true
+          echo "================ ROOT BUILD FILES ================"
+          find . -maxdepth 1 -type f | sort
 
-      - name: Show extracted files
-        run: |
-          find export -maxdepth 3 -type f | sort
+          echo
+          echo "================ GRADLE WRAPPER ================"
+          find gradle -type f | sort
+          find . -maxdepth 1 -name "gradlew*" | sort
 
-      - name: Upload Android Demo Source
-        uses: actions/upload-artifact@v4
-        with:
-          name: SceneView-Android-Demo-Source
-          path: export
-          if-no-files-found: error
+          echo
+          echo "================ ANDROID DEMO ================"
+          find samples/android-demo -type f | sort
+
+          echo
+          echo "================ COMMON SAMPLE ================"
+          find samples/common -type f | sort
+
+          echo
+          echo "================ SCENEVIEW LIBRARY ================"
+          find sceneview/src -type f | sort
+
+          echo
+          echo "================ SCENEVIEW CORE ================"
+          find sceneview-core/src -type f | sort
+
+          echo
+          echo "================ ARSCENEVIEW ================"
+          find arsceneview/src -type f | sort
+
+          echo
+          echo "================ REQUIRED BUILD FILES ================"
+          find . \( -name "build.gradle.kts" -o -name "settings.gradle.kts" -o -name "gradle.properties" -o -name "libs.versions.toml" \) | sort
