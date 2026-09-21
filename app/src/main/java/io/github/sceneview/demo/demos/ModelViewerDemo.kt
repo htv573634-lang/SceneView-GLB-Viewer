@@ -9,7 +9,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
@@ -28,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import io.github.sceneview.SceneView
 import io.github.sceneview.createDefaultCameraManipulator
@@ -73,11 +71,10 @@ import io.github.sceneview.rememberModelLoader
  * - Animation playback
  * - Native Android file picker
  *
- * No bundled model is required.
+ * No bundled/demo GLB is used.
  */
 @Composable
 fun ModelViewerDemo(onBack: () -> Unit) {
-    val context = LocalContext.current
 
     // -------------------------------------------------------------------------
     // SceneView engine / loaders
@@ -104,10 +101,8 @@ fun ModelViewerDemo(onBack: () -> Unit) {
     // -------------------------------------------------------------------------
     // Selected GLB model
     //
-    // No bundled/demo model is used.
+    // There is intentionally NO bundled model.
     // The viewer remains empty until the user selects a GLB.
-    // key(selectedUri) creates a fresh loading scope whenever the selected
-    // file changes.
     // -------------------------------------------------------------------------
 
     val activeModelInstance = selectedUri?.let { uri ->
@@ -181,6 +176,7 @@ fun ModelViewerDemo(onBack: () -> Unit) {
 
         while (animationPlaying) {
             withFrameNanos { now ->
+
                 if (startTime == 0L) {
                     startTime =
                         now -
@@ -289,18 +285,20 @@ fun ModelViewerDemo(onBack: () -> Unit) {
     }
 
     // -------------------------------------------------------------------------
-    // Back handling for sheets / animation controls
+    // Back handling
     // -------------------------------------------------------------------------
 
     BackHandler(
-        enabled = environmentSheetOpen || animationBarOpen
+        enabled =
+            environmentSheetOpen ||
+                animationBarOpen
     ) {
         environmentSheetOpen = false
         animationBarOpen = false
     }
 
     // -------------------------------------------------------------------------
-    // Clean up camera state when leaving the demo
+    // Clean up camera state
     // -------------------------------------------------------------------------
 
     DisposableEffect(Unit) {
@@ -314,6 +312,7 @@ fun ModelViewerDemo(onBack: () -> Unit) {
     // -------------------------------------------------------------------------
 
     DemoScaffold(
+
         title = if (selectedUri != null) {
             "Local GLB"
         } else {
@@ -323,19 +322,33 @@ fun ModelViewerDemo(onBack: () -> Unit) {
         },
 
         onBack = {
+
             if (selectedUri != null) {
+
+                // Close the currently selected GLB.
                 selectedUri = null
+
                 animationBarOpen = false
+
                 animationProgress = 0f
+
                 selectedAnimation = 0
+
             } else {
+
                 onBack()
             }
         },
 
-        firstFrameRendered = firstFrame.rendered,
+        firstFrameRendered =
+            firstFrame.rendered,
 
         dock = buildList {
+
+            // -------------------------------------------------------------
+            // Open GLB
+            // -------------------------------------------------------------
+
             add(
                 DockItem(
                     Icons.Filled.FolderOpen,
@@ -345,6 +358,10 @@ fun ModelViewerDemo(onBack: () -> Unit) {
                     }
                 )
             )
+
+            // -------------------------------------------------------------
+            // Lighting
+            // -------------------------------------------------------------
 
             add(
                 DockItem(
@@ -356,7 +373,12 @@ fun ModelViewerDemo(onBack: () -> Unit) {
                 )
             )
 
+            // -------------------------------------------------------------
+            // Animation
+            // -------------------------------------------------------------
+
             if (animationNames.isNotEmpty()) {
+
                 add(
                     DockItem(
                         Icons.Outlined.Animation,
@@ -365,10 +387,15 @@ fun ModelViewerDemo(onBack: () -> Unit) {
                             animationBarOpen =
                                 !animationBarOpen
                         },
-                        selected = animationBarOpen
+                        selected =
+                            animationBarOpen
                     )
                 )
             }
+
+            // -------------------------------------------------------------
+            // Recenter
+            // -------------------------------------------------------------
 
             add(
                 DockItem(
@@ -381,8 +408,14 @@ fun ModelViewerDemo(onBack: () -> Unit) {
             )
         },
 
+        // -----------------------------------------------------------------
+        // Animation bottom overlay
+        // -----------------------------------------------------------------
+
         bottomOverlay = {
+
             AnimatedVisibility(
+
                 visible =
                     animationBarOpen &&
                         animationNames.isNotEmpty(),
@@ -393,7 +426,8 @@ fun ModelViewerDemo(onBack: () -> Unit) {
                     ) +
                         expandVertically(
                             SceneViewTokens.Motion.spring(),
-                            expandFrom = Alignment.Bottom
+                            expandFrom =
+                                Alignment.Bottom
                         ),
 
                 exit =
@@ -402,14 +436,24 @@ fun ModelViewerDemo(onBack: () -> Unit) {
                     ) +
                         shrinkVertically(
                             SceneViewTokens.Motion.spring(),
-                            shrinkTowards = Alignment.Bottom
+                            shrinkTowards =
+                                Alignment.Bottom
                         )
             ) {
+
                 AnimationBar(
-                    animationNames = animationNames,
-                    selectedAnimation = selectedAnimation,
-                    animationPlaying = animationPlaying,
-                    animationProgress = animationProgress,
+
+                    animationNames =
+                        animationNames,
+
+                    selectedAnimation =
+                        selectedAnimation,
+
+                    animationPlaying =
+                        animationPlaying,
+
+                    animationProgress =
+                        animationProgress,
 
                     onPlayingChange = {
                         animationPlaying = it
@@ -421,17 +465,24 @@ fun ModelViewerDemo(onBack: () -> Unit) {
                     },
 
                     onProgressChange = { progress ->
-                        animationProgress = progress
+
+                        animationProgress =
+                            progress
 
                         activeModelInstance
                             ?.animator
                             ?.takeIf {
+
                                 selectedAnimation in
                                     0 until it.animationCount
+
                             }
                             ?.let { animator ->
+
                                 animator.applyAnimation(
+
                                     selectedAnimation,
+
                                     progress *
                                         animator.getAnimationDuration(
                                             selectedAnimation
@@ -446,22 +497,31 @@ fun ModelViewerDemo(onBack: () -> Unit) {
         },
 
         chromeToggleOnTap = true
+
     ) {
-        // ---------------------------------------------------------------------
+
+        // -----------------------------------------------------------------
         // SceneView
-        // ---------------------------------------------------------------------
+        // -----------------------------------------------------------------
 
         Box(
-            modifier = Modifier.fillMaxSize()
+            modifier =
+                Modifier.fillMaxSize()
         ) {
+
             SceneView(
-                modifier = Modifier.fillMaxSize(),
 
-                onFrame = firstFrame.onFrame,
+                modifier =
+                    Modifier.fillMaxSize(),
 
-                engine = engine,
+                onFrame =
+                    firstFrame.onFrame,
 
-                modelLoader = modelLoader,
+                engine =
+                    engine,
+
+                modelLoader =
+                    modelLoader,
 
                 environmentLoader =
                     environmentLoader,
@@ -471,16 +531,28 @@ fun ModelViewerDemo(onBack: () -> Unit) {
 
                 cameraManipulator =
                     cameraManipulator
+
             ) {
+
                 activeModelInstance?.let { instance ->
+
                     io.github.sceneview.node.ModelNode(
-                        modelInstance = instance,
-                        autoAnimate = false
+
+                        modelInstance =
+                            instance,
+
+                        autoAnimate =
+                            false
                     )
                 }
             }
 
+            // Show loading only while an actual selected GLB
+            // is being loaded. Do NOT show it on the initial
+            // empty viewer.
+
             LoadingScrim(
+
                 loading =
                     selectedUri != null &&
                         activeModelInstance == null,
@@ -494,17 +566,21 @@ fun ModelViewerDemo(onBack: () -> Unit) {
     }
 
     // -------------------------------------------------------------------------
-    // Lighting sheet
+    // Environment / lighting sheet
     // -------------------------------------------------------------------------
 
     if (environmentSheetOpen) {
+
         EnvironmentSheet(
-            environments = viewerEnvironments,
+
+            environments =
+                viewerEnvironments,
 
             selectedPath =
                 requestedEnvironment.assetPath,
 
-            intensity = iblIntensity,
+            intensity =
+                iblIntensity,
 
             showEnvironment =
                 showEnvironment,
@@ -522,6 +598,7 @@ fun ModelViewerDemo(onBack: () -> Unit) {
             },
 
             onReset = {
+
                 requestedEnvironment =
                     viewerEnvironments.first()
 
