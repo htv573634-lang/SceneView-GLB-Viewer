@@ -13,24 +13,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout our repo
+      # 1. Checkout our actual repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 22
+      # 2. Use the Java version required by this project
+      - name: Setup Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "22"
+          java-version: "21"
+          cache: gradle
 
+      # 3. Make Gradle executable
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
-      - name: Build Android APK
+      # 4. Build our custom Android application
+      - name: Build GLB Viewer APK
         run: |
           ./gradlew \
             :app:assembleDebug \
-            --no-daemon
+            --no-daemon \
+            --stacktrace
 
+      # 5. Upload the generated APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
