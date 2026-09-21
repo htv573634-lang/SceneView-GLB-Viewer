@@ -1,0 +1,43 @@
+name: Bootstrap 6 - Extract GLB Viewer
+
+on:
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone SceneView
+        run: |
+          git clone --depth 1 --branch v4.37.0 https://github.com/SceneView/sceneview.git sceneview
+
+      - name: Copy only required files
+        run: |
+          mkdir -p extracted
+
+          cp -r sceneview/samples/android-demo extracted/android-demo
+          cp -r sceneview/samples/common extracted/common
+          cp -r sceneview/sceneview extracted/sceneview
+          cp -r sceneview/sceneview-core extracted/sceneview-core
+
+          # Remove unnecessary demo folders
+          find extracted/android-demo/src/main/java/io/github/sceneview/demo/demos \
+            -type f ! -name "ModelViewerDemo.kt" -delete
+
+          rm -rf extracted/android-demo/src/main/java/io/github/sceneview/demo/feedback
+          rm -rf extracted/android-demo/src/main/java/io/github/sceneview/demo/sketchfab
+          rm -rf extracted/android-demo/src/main/java/io/github/sceneview/demo/ai
+
+      - name: Count remaining files
+        run: |
+          echo "Remaining files:"
+          find extracted | wc -l
+
+      - name: Upload extracted viewer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SceneView-Viewer-Minimal
+          path: extracted/
