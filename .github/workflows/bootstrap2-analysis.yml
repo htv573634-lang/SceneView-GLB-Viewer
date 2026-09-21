@@ -1,0 +1,48 @@
+name: Bootstrap 2A - Repository Tree Analysis
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout current repo
+        uses: actions/checkout@v4
+
+      - name: Show repository tree in logs
+        run: |
+          echo "================ FULL REPOSITORY TREE ================"
+          find . -not -path "./.git/*" | sort
+
+          echo
+          echo "================ GRADLE FILES ================"
+          find . -name "*.gradle*" | sort
+
+          echo
+          echo "================ KOTLIN FILES ================"
+          find . -name "*.kt" | sort
+
+          echo
+          echo "================ ANDROID MANIFEST ================"
+          find . -name "AndroidManifest.xml" | sort
+
+          echo
+          echo "================ ASSETS ================"
+          find . -path "*/assets/*" | sort
+
+          echo
+          echo "================ RESOURCES ================"
+          find . -path "*/res/*" | sort
+
+          echo
+          echo "================ JNI LIBRARIES ================"
+          find . -path "*/jniLibs/*" | sort
+
+          echo
+          echo "================ AAR/JAR FILES ================"
+          find . \( -name "*.aar" -o -name "*.jar" \) | sort
