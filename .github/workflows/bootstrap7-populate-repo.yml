@@ -1,0 +1,48 @@
+name: Bootstrap 7 - Populate Repo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  populate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone SceneView
+        run: |
+          git clone --depth 1 --branch v4.37.0 \
+            https://github.com/SceneView/sceneview.git sceneview
+
+      - name: Copy minimal project into repo
+        run: |
+          cp sceneview/settings.gradle .
+          cp sceneview/build.gradle .
+          cp sceneview/gradle.properties .
+          cp sceneview/gradlew .
+          cp sceneview/gradlew.bat .
+
+          cp -r sceneview/gradle .
+          cp -r sceneview/samples/android-demo app
+          cp -r sceneview/samples/common common
+          cp -r sceneview/sceneview sceneview
+          cp -r sceneview/sceneview-core sceneview-core
+
+          find app/src/main/java/io/github/sceneview/demo/demos \
+            -type f ! -name "ModelViewerDemo.kt" -delete
+
+          rm -rf app/src/main/java/io/github/sceneview/demo/feedback
+          rm -rf app/src/main/java/io/github/sceneview/demo/sketchfab
+          rm -rf app/src/main/java/io/github/sceneview/demo/ai
+
+      - name: Commit files
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .
+          git commit -m "Bootstrap 7: Add minimal SceneView GLB Viewer" || echo "No changes"
+          git push
