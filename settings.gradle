@@ -13,7 +13,6 @@ pluginManagement {
 }
 
 dependencyResolutionManagement {
-    // PREFER_PROJECT allows Kotlin/JS plugin to add Node.js and Yarn repositories
     repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
 
     repositories {
@@ -25,26 +24,23 @@ dependencyResolutionManagement {
 
 rootProject.name = "SceneView"
 
-// Core SceneView modules.
+/*
+ * Modules that actually exist in this customized repository.
+ */
+include ":common"
 include ":sceneview-core"
 include ":sceneview"
-include ":arsceneview"
 
-// Documentation/snippet compile guard.
-include ":snippets-check"
-project(":snippets-check").projectDir = file("tools/snippets-check")
-
-// Android sample modules.
-include ":samples:common"
-include ":samples:android-demo"
-include ":samples:android-tv-demo"
-
-// Intentionally excluded because these directories are not present
-// in this customized Android GLB Viewer repository:
-//
-// :sceneview-web
-// :sceneview-compose
-// :samples:desktop-demo
-//
-// Web, Flutter, React Native and iOS demos are not required for
-// the Android GLB Viewer APK.
+/*
+ * Modules intentionally NOT included because their directories
+ * are not present in this repository:
+ *
+ * :arsceneview
+ * :sceneview-web
+ * :sceneview-compose
+ * :snippets-check
+ * :samples:common
+ * :samples:android-demo
+ * :samples:android-tv-demo
+ * :samples:desktop-demo
+ */
