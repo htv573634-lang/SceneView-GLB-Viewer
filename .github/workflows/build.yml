@@ -1,4 +1,4 @@
-name: Build SceneView Android Demo
+name: Build PIFuHDC GLB Viewer
 
 on:
   workflow_dispatch:
@@ -13,16 +13,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout our repo
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Clone official SceneView
-        run: |
-          git clone \
-            --depth 1 \
-            --branch v4.37.0 \
-            https://github.com/SceneView/sceneview.git \
-            sceneview
 
       - name: Setup Java 22
         uses: actions/setup-java@v5
@@ -30,19 +22,21 @@ jobs:
           distribution: temurin
           java-version: "22"
 
-      - name: Make Gradle executable
-        run: chmod +x sceneview/gradlew
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Build Android Demo APK
-        working-directory: sceneview
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Build Debug APK
         run: |
           ./gradlew \
-            :samples:android-demo:assembleDebug \
+            assembleDebug \
             --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SceneView-Android-Demo
-          path: sceneview/samples/android-demo/build/outputs/apk/debug/*.apk
+          name: PIFuHDC-GLB-Viewer
+          path: "**/build/outputs/apk/debug/*.apk"
           if-no-files-found: error
