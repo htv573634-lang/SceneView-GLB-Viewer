@@ -3,41 +3,46 @@ name: Export Updated ModelViewer.kt
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   export:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Clone SceneView
         run: |
-          git clone --depth 1 --branch v4.37.0 https://github.com/SceneView/sceneview.git
+          git clone --depth 1 --branch v4.37.0 \
+          https://github.com/SceneView/sceneview.git
 
-      - name: Patch ModelViewerDemo.kt
+      - name: Create patch script
         run: |
-          python3 << 'PY'
+          cat > patch.py <<'PY'
           from pathlib import Path
-          p = Path("sceneview/samples/android-demo/src/main/java/io/github/sceneview/demo/demos/ModelViewerDemo.kt")
-          text = p.read_text()
-
-          # Single-screen entry
           import re
+
+          p = Path("sceneview/samples/android-demo/src/main/java/io/github/sceneview/demo/demos/ModelViewerDemo.kt")
+          text = p.read_text(encoding="utf-8")
+
           text = re.sub(
-              r'@Composable\\s*fun ModelViewerDemo\\(onBack: \\(\\) -> Unit\\) \\{.*?\\n\\}',
-              '''@Composable
+              r'@Composable\s+fun ModelViewerDemo\(onBack: \(\) -> Unit\)\s*\{.*?\n\}',
+              """@Composable
 fun ModelViewerDemo(onBack: () -> Unit) {
     SingleModelSection(
         onBack = onBack,
         mode = ModelViewerMode.Single,
         onModeChange = {}
     )
-}''',
+}""",
               text,
+              count=1,
               flags=re.S,
           )
 
-          # Enum
           text = text.replace(
               '''private enum class ModelViewerMode(val label: String) {
     Single("Single Model"),
@@ -46,13 +51,16 @@ fun ModelViewerDemo(onBack: () -> Unit) {
 }''',
               '''private enum class ModelViewerMode(val label: String) {
     Single("GLB Viewer")
-}''',
+}'''
           )
 
-          p.write_text(text)
+          p.write_text(text, encoding="utf-8")
           PY
 
-      - name: Upload full Kotlin file
+      - name: Run patch
+        run: python3 patch.py
+
+      - name: Upload file
         uses: actions/upload-artifact@v4
         with:
           name: Updated-ModelViewerDemo
