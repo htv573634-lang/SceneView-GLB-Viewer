@@ -25,34 +25,27 @@ dependencyResolutionManagement {
 
 rootProject.name = "SceneView"
 
+// Core SceneView modules used by the Android application.
 include ":sceneview-core"
 include ":sceneview"
 include ":arsceneview"
-include ":sceneview-web"
 
-// Compose Multiplatform façade over the per-platform renderers
+// Compose Multiplatform façade.
 include ":sceneview-compose"
 
-// Doc-snippet compile guard
+// Documentation/snippet compile guard.
 include ":snippets-check"
 project(":snippets-check").projectDir = file("tools/snippets-check")
 
-// Samples that are part of this repository
+// Android sample modules.
 include ":samples:common"
 include ":samples:android-demo"
 include ":samples:android-tv-demo"
 
-// The desktop demo is intentionally not included because
-// samples/desktop-demo does not exist in this repository.
-
-// Web demo:
-// samples/web-demo/ is a static site and is not a Gradle module.
-
-// Flutter demo:
-// samples/flutter-demo/ is Dart and is not a Gradle module.
-
-// React Native demo:
-// samples/react-native-demo/ is JavaScript and is not a Gradle module.
-
-// iOS demo:
-// samples/ios-demo/ is an Xcode project and is not a Gradle module.
+// Not included:
+// :sceneview-web      -> directory is not present in this repository.
+// :samples:desktop-demo -> directory is not present in this repository.
+//
+// The repository also contains non-Gradle demos such as Web,
+// Flutter, React Native and iOS, which are not required for this
+// Android GLB Viewer APK.
