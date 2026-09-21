@@ -1,4 +1,4 @@
-name: Bootstrap 2A - Repository Tree Analysis
+name: Bootstrap 2A - Analyze SceneView Android Demo
 
 on:
   workflow_dispatch:
@@ -11,38 +11,59 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout current repo
-        uses: actions/checkout@v4
-
-      - name: Show repository tree in logs
+      - name: Clone SceneView
         run: |
-          echo "================ FULL REPOSITORY TREE ================"
-          find . -not -path "./.git/*" | sort
+          git clone \
+            --depth 1 \
+            --branch v4.37.0 \
+            https://github.com/SceneView/sceneview.git \
+            sceneview
+
+      - name: Analyze Android Demo build files
+        run: |
+          echo "================ ROOT FILES ================"
+          find sceneview -maxdepth 1 | sort
 
           echo
-          echo "================ GRADLE FILES ================"
-          find . -name "*.gradle*" | sort
+          echo "================ GRADLE ROOT ================"
+          find sceneview -maxdepth 2 \
+            \( -name "*.gradle*" -o -name "gradle.properties" -o -name "settings.gradle.kts" \) \
+            | sort
 
           echo
-          echo "================ KOTLIN FILES ================"
-          find . -name "*.kt" | sort
+          echo "================ ANDROID DEMO ================"
+          find sceneview/samples/android-demo | sort
 
           echo
-          echo "================ ANDROID MANIFEST ================"
-          find . -name "AndroidManifest.xml" | sort
+          echo "================ SCENEVIEW MODULE ================"
+          find sceneview/sceneview | sort
 
           echo
-          echo "================ ASSETS ================"
-          find . -path "*/assets/*" | sort
+          echo "================ ARSCENEVIEW MODULE ================"
+          find sceneview/arsceneview | sort
 
           echo
-          echo "================ RESOURCES ================"
-          find . -path "*/res/*" | sort
+          echo "================ REQUIRED MANIFESTS ================"
+          find sceneview \
+            -name "AndroidManifest.xml" \
+            | sort
 
           echo
-          echo "================ JNI LIBRARIES ================"
-          find . -path "*/jniLibs/*" | sort
+          echo "================ REQUIRED JNI LIBS ================"
+          find sceneview \
+            -path "*/jniLibs/*" \
+            | sort
 
           echo
-          echo "================ AAR/JAR FILES ================"
-          find . \( -name "*.aar" -o -name "*.jar" \) | sort
+          echo "================ REQUIRED AAR/JAR ================"
+          find sceneview \
+            \( -name "*.aar" -o -name "*.jar" \) \
+            | sort
+
+          echo
+          echo "================ ANDROID DEMO ASSETS ================"
+          find sceneview/samples/android-demo/src/main/assets | sort
+
+          echo
+          echo "================ ANDROID DEMO RES ================"
+          find sceneview/samples/android-demo/src/main/res | sort
