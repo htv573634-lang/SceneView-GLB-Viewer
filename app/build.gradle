@@ -1,0 +1,633 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.roborazzi)
+}
+
+// Resolve store secrets once, at android-block scope, so both `defaultConfig`
+// (which injects them into the manifest / BuildConfig) and the release secret
+// guard below (#1915) can see the same resolved values.
+//
+// Each key is read from one of:
+//   1. its environment variable (CI / store-bound builds)
+//   2. repo-root local.properties (developer machines)
+//   3. fallback empty string (the feature stays disabled at runtime — and the
+//      #1915 release guard refuses to ship a store APK in that state)
+def loadFromLocalProperties = { String propertyName ->
+    def localPropsFile = rootProject.file("local.properties")
+    if (!localPropsFile.exists()) {
+        return ""
+    }
+    def localProps = new Properties()
+    localPropsFile.withInputStream { localProps.load(it) }
+    return localProps.getProperty(propertyName, "")
+}
+
+// ARCORE_API_KEY env var -> local.properties `ARCORE_API_KEY`. Injected into
+// AndroidManifest.xml as the `arcoreApiKey` placeholder. Empty => Streetscape /
+// Geospatial / Cloud Anchors stay disabled via the demo's `hasArcoreApiKey`
+// check. See samples/android-demo/ARCORE_CLOUD_SETUP.md to provision your own key.
+def arcoreApiKey = System.getenv("ARCORE_API_KEY") ?: ""
+if (arcoreApiKey.isEmpty()) {
+    arcoreApiKey = loadFromLocalProperties("ARCORE_API_KEY")
+}
+
+// SKETCHFAB_API_KEY env var -> local.properties `sketchfab.api.key`. Injected
+// into BuildConfig so SketchfabService can authenticate against
+// api.sketchfab.com. Empty => Sketchfab features stay disabled
+// (SketchfabConfig.apiKey returns null, the service throws MissingApiKey).
+// TODO V1.1: route requests via a backend proxy so end-users never see
+// the master key in the APK. See SketchfabConfig.kt.
+def sketchfabApiKey = System.getenv("SKETCHFAB_API_KEY") ?: ""
+if (sketchfabApiKey.isEmpty()) {
+    sketchfabApiKey = loadFromLocalProperties("sketchfab.api.key")
+}
+
+android {
+    namespace = "io.github.sceneview.demo"
+
+    // Align native library ELF load segments to 16 KB so Google Play accepts
+    // the AAB on 16 KB-page-size devices (Android 15+, enforced by Play Store
+    // since Jan 2026 for existing-app updates). Filament ships prebuilt .so
+    // files; this property rewrites ELF PT_LOAD alignment headers at pack time.
+    // AGP internal key: ModulePropertyKey.OptionalString.NATIVE_LIBRARY_PAGE_SIZE
+    // Accepted values: "4k" (default), "16k", "64k".
+    experimentalProperties["android.nativeLibraryAlignmentPageSize"] = "16k"
+
+    compileSdk 37
+
+
+    defaultConfig {
+        applicationId "io.github.sceneview.demo"
+        minSdk 28
+        targetSdk 36
+        versionCode project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 350
+        versionName project.hasProperty('versionName') ? project.property('versionName') : "4.37.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // The key MUST NEVER be committed — see the resolution block above.
+        manifestPlaceholders["arcoreApiKey"] = arcoreApiKey
+        buildConfigField "String", "SKETCHFAB_API_KEY", "\"${sketchfabApiKey}\""
+    }
+
+    signingConfigs {
+        release {
+            // Populated from environment variables or local.properties
+            def keystoreFile = System.getenv("SCENEVIEW_DEMO_KEYSTORE_FILE")
+            def keystorePass = System.getenv("SCENEVIEW_DEMO_KEYSTORE_PASSWORD")
+            def ksAlias = System.getenv("SCENEVIEW_DEMO_KEY_ALIAS")
+            def keyPass = System.getenv("SCENEVIEW_DEMO_KEY_PASSWORD")
+
+            if (keystoreFile != null) {
+                storeFile file(keystoreFile)
+                storePassword keystorePass
+                keyAlias ksAlias
+                keyPassword keyPass
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            def keystoreFile = System.getenv("SCENEVIEW_DEMO_KEYSTORE_FILE")
+            if (keystoreFile != null) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+    androidResources {
+        // The demo apps ship in en-US only: source strings live in `values/`
+        // and there are no translated `values-<locale>/` folders. This filter
+        // also drops the translations AndroidX / Material ship inside their
+        // own AARs, which would otherwise render system-provided strings
+        // ("Cancel", "Show more") in the device language on a non-English
+        // phone while every demo string stayed English.
+        localeFilters += ['en-rUS']
+
+        // `.filamat` and `.ktx` are already compressed payloads — re-zipping
+        // them in the APK only wastes CPU. `.glb` and `.hdr` stay compressible:
+        // the demo GLBs are Draco + WebP packed and the HDRs are RGBE, both of
+        // which the APK zip stage still shrinks meaningfully.
+        // `.task` is the MediaPipe bundle (a ZIP that MediaPipe memory-maps at
+        // runtime) — re-compressing it in the APK breaks `createFromOptions`.
+        noCompress 'filamat', 'ktx', 'task'
+    }
+    packaging {
+        resources {
+            // Drop duplicate transitive licence / metadata files that several
+            // AndroidX artifacts each ship — pure dead weight in the APK.
+            excludes += [
+                'META-INF/*.kotlin_module',
+                'META-INF/androidx/**',
+                'META-INF/{AL2.0,LGPL2.1}',
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE*',
+                'META-INF/NOTICE*',
+                'kotlin/**',
+                'DebugProbesKt.bin',
+            ]
+        }
+    }
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            all {
+                systemProperty 'robolectric.logging.enabled', 'true'
+                // #2692: the CI Unit-tests job intermittently hangs in THIS task and
+                // gets force-cancelled at the job's 30 min timeout with zero output —
+                // no attribution possible. Name every test as it starts so the log's
+                // last line identifies the hanging test, and fail the task at 25 min
+                // (before the job kill) so partial reports survive as artifacts.
+                testLogging {
+                    events 'started', 'failed'
+                    displayGranularity = 2
+                }
+                timeout = java.time.Duration.ofMinutes(25)
+            }
+        }
+    }
+}
+
+// Keep the RELEASE variant's JVM unit tests (#3410, restored for AGP 9 in #3440).
+//
+// AGP 9 no longer creates host (unit) tests for every variant: only the default
+// one gets them, so `testReleaseUnitTest` silently stopped existing and the CI
+// "Unit tests" job — which invokes that exact task — would have failed with
+// "task not found". Losing it would also undo #3410: the release variant is where
+// 13 compose-rule tests once failed while passing on debug, because
+// `createComposeRule()`'s activity host came from a `debugImplementation`-only
+// manifest. That task is the regression guard for the fix.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variantBuilder ->
+        variantBuilder.enableUnitTest = true
+    }
+}
+
+// Build-time fail-loud guard for store secrets (#1915).
+//
+// An empty SKETCHFAB_API_KEY / ARCORE_API_KEY compiles silently — Gradle is
+// happy with `""` — and ships a store APK whose Sketchfab carousels are
+// invisible and whose Streetscape / Geospatial / Cloud Anchor demos are
+// disabled, with nothing surfacing the cause. That is the exact silent-fail
+// class that caused #1909 (empty carousels on Play Store for weeks).
+//
+// Refuse to assemble a RELEASE variant when either secret is empty. Debug
+// builds stay permissive — developers without the keys still need to compile.
+// Forks / PRs from forks (no access to org secrets) opt out by setting
+// `SV_ALLOW_MISSING_SECRETS=1` in the environment, or pass
+// `-PSV_ALLOW_MISSING_SECRETS=1` on the Gradle command line.
+//
+// AGP 9 removed the legacy `android { applicationVariants }` container this used
+// to iterate, so the guard now hangs off the release assemble task by name. This
+// module declares no product flavors, so `assembleRelease` IS the release
+// variant's assemble task — the same task `variant.assembleProvider` returned.
+def allowMissingStoreSecrets = System.getenv("SV_ALLOW_MISSING_SECRETS") == "1" ||
+        (project.hasProperty("SV_ALLOW_MISSING_SECRETS") &&
+                project.property("SV_ALLOW_MISSING_SECRETS").toString() == "1")
+tasks.matching { it.name == "assembleRelease" }.configureEach { assembleTask ->
+    assembleTask.doFirst {
+        if (allowMissingStoreSecrets) {
+            logger.warn("⚠️  SV_ALLOW_MISSING_SECRETS=1 — skipping release secret guard (#1915).")
+            return
+        }
+        def missing = []
+        if (sketchfabApiKey == null || sketchfabApiKey.trim().isEmpty()) {
+            missing << "SKETCHFAB_API_KEY"
+        }
+        if (arcoreApiKey == null || arcoreApiKey.trim().isEmpty()) {
+            missing << "ARCORE_API_KEY"
+        }
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                    "Release build refusing to ship without store secrets: " +
+                    "${missing.join(', ')}.\n" +
+                    "  An empty key compiles silently and ships a store APK with\n" +
+                    "  invisible Sketchfab carousels / disabled AR Geospatial demos\n" +
+                    "  (the #1909 silent-fail class).\n" +
+                    "  Fix: set the missing secret(s) as environment variables\n" +
+                    "  (CI: GitHub Secrets), or in the repo-root local.properties\n" +
+                    "  (SKETCHFAB_API_KEY -> sketchfab.api.key, ARCORE_API_KEY -> ARCORE_API_KEY).\n" +
+                    "  Forks without org secrets: pass -PSV_ALLOW_MISSING_SECRETS=1\n" +
+                    "  or export SV_ALLOW_MISSING_SECRETS=1 to override.")
+        }
+        logger.lifecycle("✅ Release secret guard (#1915): SKETCHFAB_API_KEY + ARCORE_API_KEY present.")
+    }
+}
+
+// AGP 9 ships built-in Kotlin support, so `org.jetbrains.kotlin.android` is gone
+// and with it the `android { kotlinOptions { } }` block. The Kotlin JVM target
+// now lives in the top-level `kotlin { }` extension AGP registers itself.
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+    }
+}
+
+dependencies {
+    // Compose BOM
+    implementation platform(libs.androidx.compose.bom)
+
+    implementation project(":samples:common")
+
+    // Compose (extras beyond what :samples:common provides)
+    implementation libs.androidx.compose.material.icons.extended
+    // Material 3 Expressive APIs (alpha, newer than BOM's stable release)
+    implementation libs.androidx.compose.material3.expressive
+
+    // Compose @Preview annotation — needed at compile time so the AS preview pane and
+    // Roborazzi snapshot tests can discover @Preview functions on the demos.
+    implementation libs.androidx.compose.ui.tooling.preview
+    // ui-tooling provides the runtime that renders @Preview functions in the AS pane;
+    // shipping it in debug only avoids bundling the inspector into release APKs.
+    debugImplementation libs.androidx.compose.ui.tooling
+
+    // SceneView — 3D + AR
+    implementation project(":sceneview")
+    implementation project(":arsceneview")
+
+    // Google Play In-App Updates — Play Core deps come via :samples:common
+    // (`api libs.play.app.update*`). Manager + banner live in
+    // `io.github.sceneview.sample.common.update.*`.
+
+    // Sketchfab API client — OkHttp for network, kotlinx-serialization for JSON.
+    // Used by io.github.sceneview.demo.sketchfab.SketchfabService to stream
+    // models from api.sketchfab.com instead of bundling GLBs in the APK.
+    // okhttp-coroutines provides Call.executeAsync(): cancelling the calling
+    // coroutine aborts the socket, so a re-typed Explore search never stacks
+    // zombie requests behind the debounce (#2644).
+    implementation libs.okhttp
+    implementation libs.okhttp.coroutines
+    implementation libs.kotlinx.serialization.json
+
+    // Google Fused Location Provider — required by ARCore Geospatial mode
+    // (Config.GeospatialMode.ENABLED) used by ARStreetscapeDemo. Without this
+    // dependency on the classpath, Session.configure() throws an
+    // IllegalStateException complaining about missing FLP classes and the
+    // Streetscape demo renders a black screen.
+    implementation libs.play.services.location
+
+    // ML Kit Object Detection — bundled model so ARMLObjectLabelDemo works
+    // offline. The default options classify generic categories (Home good,
+    // Fashion good, Food, Place, Plant). For finer labels callers can plug
+    // in a custom TFLite model via ObjectDetectorOptions / CustomObjectDetectorOptions.
+    // See ARMLObjectLabelDemo (#1737).
+    implementation libs.mlkit.object.detection
+
+    // ML Kit GenAI Prompt API — Gemini Nano on-device for the Point & Ask demo.
+    // Zero bundled weights (the model lives in the system AICore app); availability
+    // is runtime-gated per device and the demo degrades honestly when AICore is
+    // absent (every emulator). See PointAndAskDemo / AskEngine (#2648).
+    implementation libs.mlkit.genai.prompt
+
+    // MediaPipe Tasks Vision — on-device Pose Landmarker for the AR Body Tracker demo.
+    // ARCore has no native body-tracking API, so the demo feeds the AR CPU camera image
+    // to MediaPipe and projects the 33 image-space landmarks onto SceneView's 17
+    // ARKit-parity Joint enum. The .task model is bundled in src/main/assets. Demo-only
+    // dependency — the published arsceneview artifact carries no MediaPipe code, just the
+    // renderer-agnostic BodyPose / Joint value types. See ARBodyTrackerDemo (#1763).
+    //
+    // MediaPipe's tasks-vision POM declares `com.google.auto.value:auto-value`
+    // (the *full* annotation processor, not just `-annotations`) as a regular
+    // runtime dependency. AutoValue is compile-time-only — it pulls a shaded
+    // JavaPoet that references compile-time-only `javax.lang.model.**` JDK
+    // classes. On the release minify classpath R8 full-mode promotes those
+    // missing classes to a hard error, failing `minifyReleaseWithR8` and the
+    // Play Store deploy. Exclude it — it is never used at runtime (#2106).
+    implementation(libs.mediapipe.tasks.vision) {
+        exclude group: 'com.google.auto.value', module: 'auto-value'
+    }
+
+    // Screenshot testing (Roborazzi — JVM, no emulator needed)
+    testImplementation libs.robolectric
+    testImplementation libs.roborazzi
+    testImplementation libs.roborazzi.compose
+    testImplementation libs.roborazzi.rule
+    testImplementation libs.androidx.test.junit
+    testImplementation platform(libs.androidx.compose.bom)
+    testImplementation libs.androidx.compose.ui
+
+    // Compose layout assertions on the JVM, via Robolectric — no emulator.
+    // Added for DemoScaffoldBottomBandTest (#3229), which measures the real
+    // bottom band at a large font scale. The defect it pins was invisible to
+    // every existing check: a Roborazzi golden only fails if a human looks at
+    // the diff, and the overlap it captures is 4 dp.
+    testImplementation libs.androidx.compose.ui.test.junit4
+    // No `androidx.compose.ui:ui-test-manifest` dependency here (#3410): that
+    // artifact's sole content is a manifest declaring the bare
+    // `ComponentActivity` `createComposeRule()` launches into, and it is
+    // documented to be added `debugImplementation`-only. That works for
+    // `testDebugUnitTest` but not `testReleaseUnitTest` — AGP links the
+    // release variant's unit-test resource package from the release
+    // implementation graph, which a `debugImplementation` dependency never
+    // reaches, so every compose-rule Robolectric test failed to resolve
+    // `ComponentActivity` in the release variant only (CI never ran it to
+    // notice: `verifyRoborazziDebug` is debug-only). The same manifest entry
+    // is declared directly in `src/main/AndroidManifest.xml` instead, so it
+    // reaches both variants' real manifest/resource-link pipeline — see the
+    // comment there.
+
+    testImplementation libs.kotlin.coroutines.test
+    // Local HTTP double for SketchfabService's cooperative-cancellation test
+    // (#2644) — proves an aborted search releases its socket instead of
+    // running to completion behind the debounce.
+    testImplementation libs.mockwebserver3
+
+    // UiAutomator-based interaction tests. Drives the real demo app process through
+    // DemoHostActivity (debug flavour) — no ComposeTestRule, no Filament thread-adoption
+    // races. Screenshots grabbed via UiDevice cover the full framebuffer including the
+    // SurfaceView that Compose's captureToImage() cannot see.
+    androidTestImplementation libs.androidx.test.ext.junit
+    androidTestImplementation libs.androidx.test.runner
+    androidTestImplementation libs.androidx.test.uiautomator
+}
+
+// ─── Generated demo registry (issue #1976) ───────────────────────────────
+//
+// `GeneratedDemos.kt` is the collated output of the append-only DemoRegistry
+// fragments (#1797). It used to be committed, which guaranteed a merge conflict
+// on every parallel demo-adding PR. It is now `.gitignore`d and regenerated at
+// build time by this task — the same treatment #1928 applied to the MCP's
+// `llms-txt.ts`. A clean checkout with NO `GeneratedDemos.kt` present builds
+// `:samples:android-demo` because every Kotlin compilation depends on this task.
+//
+// `--kt-only` writes ONLY `GeneratedDemos.kt`; the collator's other two outputs
+// (root `llms.txt` + `docs/docs/llms.txt`) stay tracked and hand-maintained, so
+// the build must never rewrite them.
+def collatorScript = rootProject.file("samples/android-demo/scripts/collate-demos.sh")
+def fragmentsDir = file("src/main/java/io/github/sceneview/demo/fragments")
+def valuesDir = file("src/main/res/values")
+def generatedDemosFile = file("src/main/java/io/github/sceneview/demo/fragments/GeneratedDemos.kt")
+
+def generateDemoRegistry = tasks.register("generateDemoRegistry", Exec) {
+    description = "Regenerates GeneratedDemos.kt from the per-demo DemoRegistry fragments (#1976)."
+    group = "build"
+
+    // Re-run when a fragment is added/removed/edited or a demo string changes —
+    // the collator reads fragment metadata and resolves titles from values/*.xml.
+    inputs.dir(fragmentsDir).withPropertyName("fragments")
+    inputs.dir(valuesDir).withPropertyName("demoStrings")
+    inputs.file(collatorScript).withPropertyName("collator")
+    outputs.file(generatedDemosFile).withPropertyName("generatedDemos")
+
+    workingDir rootProject.projectDir
+    commandLine "bash", collatorScript.absolutePath, "--kt-only"
+}
+
+// Make every Kotlin compilation (debug/release, app + unit tests) depend on the
+// generator so a fresh checkout always has GeneratedDemos.kt before kotlinc runs.
+tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }.configureEach {
+    dependsOn(generateDemoRegistry)
+}
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(generateDemoRegistry)
+}
+// detekt reads the same `src/main/java` tree kotlinc does, so every detekt task
+// (`detekt`, `detektBaseline`, ...) consumes `GeneratedDemos.kt` too. Without this
+// edge Gradle fails validation with "implicit dependency on generateDemoRegistry"
+// as soon as both tasks are in the graph (#3450) — which is also why the demo's
+// detekt task must run in CI: it was never scheduled, so nobody saw it.
+tasks.matching { it.name.startsWith("detekt") }.configureEach {
+    dependsOn(generateDemoRegistry)
+}
+
+// ─── Bundled "What's new" changelog ──────────────────────────────────────
+//
+// The Samples tab surfaces recently shipped / fixed work by parsing the
+// repo-root CHANGELOG.md at runtime (io.github.sceneview.demo.whatsnew). The
+// file is copied into a generated assets dir on every build, so the in-app
+// list is regenerated from the same artifact the release pipeline writes
+// (collate-changelog.sh) and can never silently go stale — shipping a release
+// IS updating the screen. WhatsNewAssetIntegrityTest (Robolectric) fails if
+// this wiring rots: it opens the merged asset and requires it to parse.
+//
+// The directory is registered through `sources.assets.addGeneratedSourceDirectory`
+// rather than appended to `sourceSets.main.assets.srcDirs`: AGP then owns the
+// output location and declares the producer as a dependency of *every* consumer
+// it generates. A plain srcDirs entry is invisible to the task graph, so each
+// consumer has to be named by hand — and the one nobody thinks of,
+// `lintVitalAnalyzeRelease`, only exists in release, which is why it broke the
+// Play deploy instead of PR CI.
+// The `## Unreleased` section is SYNTHESISED here from the `changelog.d/`
+// fragments, because that section is empty in the committed CHANGELOG.md by
+// construction — fragments only become a versioned section at release time.
+// Without this, an installed build could never show work merged since the last
+// release, which is precisely the window "What's new since you last tested"
+// exists to cover: releases are rare, and between two of them every merged PR
+// would otherwise be invisible in the app.
+//
+// EVERY HTML COMMENT IS STRIPPED, and that is a correctness requirement, not
+// tidiness. `<!-- category: X -->` is the only comment with meaning; every
+// other one is a maintainer-only note (#3037 shipped a nine-line internal
+// sign-off block one release away from the public notes). This task renders
+// fragments to a USER-FACING surface, so the same rule applies here — see
+// .claude/scripts/lib/changelog-fragment.sh, whose semantics this mirrors:
+// state carried across lines (a comment may span several), tags recognised on
+// the RAW line before stripping, and code spans treated as literal text so a
+// fragment that DOCUMENTS `<!--` does not open a comment that eats the rest of
+// the file.
+abstract class BundleChangelogAsset extends DefaultTask {
+    @InputFile
+    abstract RegularFileProperty getChangelog()
+
+    /** `changelog.d/*.md` — the not-yet-released fragments. */
+    @InputFiles
+    @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getFragments()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutputDir()
+
+    // Collator order (collate-changelog.sh). `Changed` is the fallback bucket.
+    static final List<String> CATEGORIES =
+            ['Added', 'Changed', 'Fixed', 'Performance', 'Removed', 'Tests', 'Docs']
+
+    // These helpers are deliberately NOT private. Gradle decorates the task
+    // class at runtime, and a Groovy closure dispatching onto the decorated
+    // instance cannot see the superclass's private methods — the loops below
+    // are plain `for` statements for the same reason.
+    static String canonicalCategory(String raw) {
+        switch (raw.toLowerCase().trim()) {
+            case ['added', 'new']: return 'Added'
+            case ['fixed', 'fix', 'bugfix']: return 'Fixed'
+            case ['performance', 'perf']: return 'Performance'
+            case ['removed', 'remove']: return 'Removed'
+            case ['tests', 'test']: return 'Tests'
+            case ['docs', 'doc', 'documentation']: return 'Docs'
+            default: return 'Changed'
+        }
+    }
+
+    static final java.util.regex.Pattern CATEGORY_TAG =
+            ~/^\s*<!--\s*category:\s*([A-Za-z]+)\s*-->\s*$/
+
+    /**
+     * Removes every HTML-comment span from one line. `state.inComment` carries
+     * across lines. Returns the comment-free text.
+     */
+    static String stripComments(String line, Map state) {
+        def rest = line
+        def out = new StringBuilder()
+        while (rest) {
+            if (state.inComment) {
+                int close = rest.indexOf('-->')
+                if (close < 0) { rest = ''; break }
+                rest = rest.substring(close + 3)
+                state.inComment = false
+                continue
+            }
+            int open = rest.indexOf('<!--')
+            int tick = rest.indexOf('`')
+            if (open < 0 && tick < 0) { out.append(rest); break }
+            if (open >= 0 && (tick < 0 || open < tick)) {
+                out.append(rest.substring(0, open))
+                rest = rest.substring(open + 4)
+                state.inComment = true
+                continue
+            }
+            // A code span opens with a run of N backticks and closes on the next
+            // run of the same length; an unclosed run is literal text.
+            out.append(rest.substring(0, tick))
+            def tail = rest.substring(tick)
+            int runLen = 0
+            while (runLen < tail.length() && tail.charAt(runLen) == '`' as char) runLen++
+            def run = '`' * runLen
+            def after = tail.substring(runLen)
+            int close = after.indexOf(run)
+            if (close < 0) { out.append(run); rest = after }
+            else {
+                out.append(run).append(after.substring(0, close)).append(run)
+                rest = after.substring(close + runLen)
+            }
+        }
+        return out.toString()
+    }
+
+    /**
+     * Splits a fragment block into bullets. A fragment may be prose rather than
+     * a list (no leading `- `); it becomes one bullet so it renders as an entry
+     * instead of vanishing into a section with no list. Wrapped continuation
+     * lines fold into the bullet above them.
+     */
+    static List<String> bulletsOf(String text) {
+        def out = []
+        for (String raw : text.readLines()) {
+            def line = raw.trim()
+            if (!line) continue
+            if (line.startsWith('- ')) out << line
+            else if (!out.isEmpty()) out[out.size() - 1] = out[out.size() - 1] + ' ' + line
+            else out << '- ' + line
+        }
+        return out
+    }
+
+    /** Groups every fragment's bullets by canonical category. */
+    Map<String, List<String>> readFragments() {
+        def buckets = [:]
+        def files = new ArrayList<File>(fragments.files)
+        Collections.sort(files, { a, b -> a.name <=> b.name } as Comparator)
+
+        for (File file : files) {
+            if (file.name == 'README.md' || !file.isFile()) continue
+            def state = [inComment: false]
+            def category = 'Changed'
+            def body = new StringBuilder()
+
+            for (String line : file.readLines('UTF-8')) {
+                def tag = CATEGORY_TAG.matcher(line)
+                if (!state.inComment && tag.matches()) {
+                    // Close the preceding block BEFORE switching bucket — a
+                    // fragment may carry several tags and each owns what follows.
+                    for (String bullet : bulletsOf(body.toString().trim())) {
+                        buckets.get(category, []) << bullet
+                    }
+                    body.setLength(0)
+                    category = canonicalCategory(tag.group(1))
+                    continue
+                }
+                def stripped = stripComments(line, state)
+                // Drop a line that contributed only comment; a genuinely blank
+                // line is what separates bullets and is kept.
+                if (!stripped.trim() && line.trim()) continue
+                body.append(stripped).append('\n')
+            }
+            if (state.inComment) {
+                // Failing loudly is the only honest option: the alternative is a
+                // screen silently missing entries.
+                throw new GradleException(
+                        "changelog.d/${file.name} has an unterminated '<!--' — every bullet after " +
+                        "it would be silently dropped from the in-app What's new screen.")
+            }
+            for (String bullet : bulletsOf(body.toString().trim())) {
+                buckets.get(category, []) << bullet
+            }
+        }
+        return buckets
+    }
+
+    @TaskAction
+    void bundle() {
+        def target = outputDir.get().file("CHANGELOG.md").asFile
+        target.parentFile.mkdirs()
+
+        def buckets = readFragments()
+        def unreleased = new StringBuilder()
+        for (String category : CATEGORIES) {
+            def bullets = buckets[category]
+            if (!bullets) continue
+            unreleased.append('\n### ').append(category).append('\n\n')
+            for (String bullet : bullets) unreleased.append(bullet).append('\n')
+        }
+
+        // Splice the synthesised body into the committed `## Unreleased`
+        // placeholder rather than appending a second one — the runtime parser
+        // reads the FIRST section, and two would make the file's own shape a lie.
+        def source = changelog.get().asFile.text
+        def body = unreleased.toString()
+        target.text = body.isEmpty() ? source
+                : source.replaceFirst(/(?m)^## Unreleased[ \t]*$/, "## Unreleased\n${java.util.regex.Matcher.quoteReplacement(body)}")
+    }
+}
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        def bundleChangelogAsset = tasks.register(
+                "bundle${variant.name.capitalize()}ChangelogAsset", BundleChangelogAsset) {
+            it.description = "Bundles CHANGELOG.md + the changelog.d fragments into the ${variant.name} assets for the What's new screen."
+            it.group = "build"
+            it.changelog.set(rootProject.file("CHANGELOG.md"))
+            it.fragments.from(rootProject.fileTree("changelog.d") { include '*.md' })
+        }
+        variant.sources.assets.addGeneratedSourceDirectory(bundleChangelogAsset) { it.outputDir }
+    }
+}
+
+// ─── Roborazzi goldens are a declared test input (#3034, root cause of #3029) ─
+//
+// `verifyRoborazziDebug` compares against the PNGs under `src/test/snapshots/`,
+// but the Roborazzi plugin reads them from inside the test JVM, so Gradle never
+// knew the directory was an input of `testDebugUnitTest`. Measured 2026-08-06
+// (#3029): mutate a golden by 8000 red pixels, re-run, and the task came back
+// `UP-TO-DATE` / `BUILD SUCCESSFUL in 1s` having read no golden at all — a PR
+// whose only change IS a golden went green. The workaround was `--rerun` on
+// every gate (a full minute each run); the fix is to tell Gradle the truth.
+// `fileTree` rather than `inputs.dir` so a module without goldens still
+// configures — a missing directory is an empty input, not a failure.
+tasks.withType(Test).configureEach {
+    inputs.files(fileTree("src/test/snapshots"))
+            .withPropertyName("roborazziGoldens")
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+}

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings for the `ar-placement` demo (registered by
+     `ArPlacementFragment.kt`). Android's resource merger
+     fans every `res/values/*.xml` file in, so `R.string.demo_ar_placement_title` etc.
+     remains globally resolvable. Adding a new demo never needs to touch
+     this file or `strings.xml` — see #1870.
+
+     #3405 folded `ar-instant-placement` into this demo, so the placement-mode copy lives
+     here now. The four `demo_ar_placement_picker_*` keys that used to sit in this file were
+     only ever read by that retired demo — the canonical picker
+     (`common/placement/PlacementModelPicker.kt`) carries its own — and went with it. -->
+<resources>
+    <string name="demo_ar_placement_title">AR Placement</string>
+    <string name="demo_ar_placement_subtitle">Place objects on a floor or mount a TV on a wall</string>
+
+    <!-- Pre-AR chooser (#3405). The whole point of this screen is that the subject is
+         chosen before the camera opens, so its copy is about the choice, not about AR. -->
+    <string name="ar_placement_chooser_headline">Choose an object, then tap a surface</string>
+    <string name="ar_placement_teaches">Choose a floor or wall, then place an object in your space. Move, rotate and resize it to see how it fits.</string>
+    <string name="ar_placement_cta">Place in AR</string>
+    <string name="ar_placement_cta_named">Place %1$s in AR</string>
+    <string name="ar_placement_cta_checking">Checking whether this device supports ARCore…</string>
+    <string name="ar_placement_cta_unsupported">This device does not support ARCore, so the camera half of this demo cannot run here.</string>
+    <string name="ar_placement_cta_no_model">Pick a model first.</string>
+
+    <!-- Placement mode — the axis that used to be the `ar-instant-placement` demo. -->
+    <string name="ar_placement_mode_heading">Placement accuracy</string>
+    <string name="ar_placement_mode_plane">Find a surface</string>
+    <string name="ar_placement_mode_instant">Place instantly</string>
+    <string name="ar_placement_mode_plane_help">Scan first for a precise fit on a detected surface.</string>
+    <string name="ar_placement_mode_instant_help">Place before scanning finishes. The position adjusts as the camera understands the room.</string>
+    <string name="ar_placement_instant_approximating">Approximating</string>
+    <string name="ar_placement_instant_tracked">Tracked</string>
+    <string name="ar_placement_instant_badge">Instant placement · %1$s</string>
+
+    <!-- Session toggles, moved onto the chooser with the rest of the setup (#1882/#1883). -->
+    <string name="ar_placement_snap_to_plane">Use detected surfaces</string>
+    <string name="ar_placement_snap_to_plane_on">Place only on a surface the camera has detected.</string>
+    <string name="ar_placement_snap_to_plane_off">Also allow placement on nearby tracked points.</string>
+    <string name="ar_placement_show_reticle">Show placement cursor</string>
+    <string name="ar_placement_show_reticle_help">Preview where the next tap will place your object.</string>
+
+    <!-- In-AR chrome. -->
+    <string name="ar_placement_change_model">Change model</string>
+    <string name="ar_placement_catalogue_note">Bundled models work offline. Online models download when selected; a bundled model is shown while they load.</string>
+</resources>

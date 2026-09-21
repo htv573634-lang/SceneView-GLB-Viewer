@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings for the unified `materials` demo (registered by
+     `MaterialsFragment.kt`). #3495 rebuilt the demo as a material studio: a
+     nine-sphere gallery, a single-sphere Inspect with live sliders, and the
+     Occlusion section carried over from the retired `occlusion-material` demo
+     (#2239 Batch 4). The retired `texture-streaming` id deep-links to Inspect,
+     which is where a live `MaterialInstance` parameter swap now happens, so its
+     own strings are gone with the scene they described.
+     Android's resource merger fans every `res/values/*.xml` file in, so
+     `R.string.demo_materials_title` etc. remains globally resolvable. Adding a
+     new demo never needs to touch this file or `strings.xml` — see #1870. -->
+<resources>
+    <string name="demo_materials_title">Materials</string>
+    <!-- #3624: the identity pill while one sphere is open. Naming the material there is
+         what turns the arrow beside it into "back to the wall" rather than "leave the
+         demo" — the same thing the system back gesture now does. -->
+    <string name="demo_materials_title_detail">Materials · %1$s</string>
+    <string name="demo_materials_subtitle">Compare metal, glass, fabric and glow</string>
+    <!-- The scene is procedural; what the cover waits on is the HDR environment's
+         IBL prefilter, without which nothing has anything to reflect. -->
+    <string name="demo_materials_loading">Lighting the studio…</string>
+
+    <!-- Segmented modes. Order mirrors the `MaterialsMode` enum. -->
+    <string name="demo_materials_mode_gallery">Gallery</string>
+    <string name="demo_materials_mode_inspect">Inspect</string>
+    <string name="demo_materials_mode_occlusion">Occlusion</string>
+
+    <!-- #3609: the peek header and the sheet line both say the same thing, because the
+         wall reads as a picture and nothing else on screen suggests the spheres respond. -->
+    <string name="demo_materials_gallery_hint">Tap a sphere to zoom in on it</string>
+    <string name="demo_materials_tap_hint">Tap any sphere to fly the camera onto it and open its parameters. Drag anywhere — over the labels too — to move the camera.</string>
+    <string name="demo_materials_picker_label">Material</string>
+    <string name="demo_materials_environment_label">Environment</string>
+
+    <!-- Occlusion section — formerly the `occlusion-material` demo (#1776). -->
+    <string name="demo_occlusion_material_toggle">Occluder visible</string>
+    <string name="demo_occlusion_material_status_visible">Occluder shown · a tinted plate covers the helmet</string>
+    <string name="demo_occlusion_material_status_occluding">Occlusion material · invisible, still hides the helmet</string>
+    <string name="demo_occlusion_material_explainer">A plane sits between the camera and the helmet. Toggle ON: a debug-tinted plate shows where the plane is. Toggle OFF: the same plane wears the occlusion material — invisible, but it still hides what is behind it.</string>
+    <string name="demo_materials_preset_chrome">Polished chrome</string>
+    <string name="demo_materials_preset_gold">Polished gold</string>
+    <string name="demo_materials_preset_copper">Satin copper</string>
+    <string name="demo_materials_preset_aluminium">Brushed aluminum</string>
+    <string name="demo_materials_preset_ceramic">Glazed ceramic</string>
+    <string name="demo_materials_preset_car_paint">Car paint — clearcoat</string>
+    <string name="demo_materials_preset_velvet">Velvet — sheen</string>
+    <string name="demo_materials_preset_crystal">Crystal — transmission</string>
+    <string name="demo_materials_preset_glow">Neon sign — emissive</string>
+    <string name="demo_materials_explainer_chrome">At the preset values, metallic = 1 and roughness = 0.02 turn the sphere into a nearly perfect reflection of the studio.</string>
+    <string name="demo_materials_explainer_gold">At the preset values, metallic = 1 makes base color the gold reflectance and roughness = 0.14 softens its highlights.</string>
+    <string name="demo_materials_explainer_copper">At the preset values, metallic = 1 and roughness = 0.32 spread the copper reflections into a satin highlight.</string>
+    <string name="demo_materials_explainer_aluminium">At the preset values, metallic = 1 and roughness = 0.55 scatter aluminum reflections into a brushed-looking finish.</string>
+    <string name="demo_materials_explainer_ceramic">At the preset values, metallic = 0, roughness = 0.06 and reflectance = 0.7 give ceramic a sharp glazed highlight.</string>
+    <string name="demo_materials_explainer_car_paint">At the preset values, clearCoat = 1 adds a second specular lobe over the base coat: the extra sharp highlight is the lacquer.</string>
+    <string name="demo_materials_explainer_velvet">At the preset values, sheenColor adds a tinted fabric rim and sheenRoughness = 0.3 controls its spread at grazing angles.</string>
+    <string name="demo_materials_explainer_crystal">At the preset values, transmission = 1 and ior = 1.5 let the environment refract through the crystal.</string>
+    <string name="demo_materials_explainer_glow">At the preset values, emissive is the tint multiplied by 4, so the neon surface stays bright independently of the studio light.</string>
+    <string name="demo_materials_base_matte">Base · matte plastic</string>
+    <string name="demo_materials_base_layer">Base · no extra layer</string>
+    <string name="demo_materials_single">Single</string>
+    <string name="demo_materials_compare">Compare</string>
+    <string name="demo_materials_hide_base">Hide the base comparison</string>
+    <string name="demo_materials_show_base">Show the base comparison</string>
+    <string name="demo_materials_animate">Animate</string>
+    <string name="demo_materials_pause_camera">Pause the camera</string>
+    <string name="demo_materials_animate_camera">Animate the camera</string>
+    <string name="demo_materials_back_gallery">Back to the gallery</string>
+    <string name="demo_materials_inspect_preset">Inspect this material</string>
+    <string name="demo_materials_metallic">Metallic</string>
+    <string name="demo_materials_roughness">Roughness</string>
+    <string name="demo_materials_clearcoat">Clear coat</string>
+    <string name="demo_materials_sheen">Sheen</string>
+    <string name="demo_materials_transmission">Transmission</string>
+    <string name="demo_materials_emissive">Emissive strength</string>
+    <string name="demo_materials_env_studio">Studio</string>
+    <string name="demo_materials_env_interior">Interior</string>
+    <string name="demo_materials_env_sunset">Sunset</string>
+    <string name="demo_materials_env_night">Night</string>
+    <string name="demo_materials_occluder">Occluder</string>
+    <string name="demo_materials_show_occluder">Show the occluder plane</string>
+</resources>

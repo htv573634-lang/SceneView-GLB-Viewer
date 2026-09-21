@@ -1,0 +1,994 @@
+package io.github.sceneview.demo
+
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.provider.MediaStore
+import io.github.sceneview.demo.R
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiScrollable
+import androidx.test.uiautomator.UiSelector
+import androidx.test.uiautomator.Until
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+
+/**
+ * Interaction tests for the SceneView Android demos.
+ *
+ * **Approach**: launch each demo composable directly via [DemoHostActivity] (a debug-only
+ * harness that accepts `demo_id` as intent extra), then drive the real controls with
+ * UiAutomator as a user would. Screenshots are captured between each interaction with
+ * `UiDevice.takeScreenshot()` (full framebuffer including Filament SurfaceView).
+ *
+ * **Why DemoHostActivity?** The earlier scroll-then-click approach was fragile for demos in
+ * the Advanced section (`physics`, `custom-geometry`, …) — `UiScrollable.scrollTextIntoView()`
+ * gave up before the Compose LazyColumn recomposed the far-down row into view. Launching
+ * the demo composable directly with an Intent bypasses the home list entirely.
+ *
+ * **Why not ComposeTestRule?** Compose's test runner dispatches coroutines on a thread
+ * Filament has not "adopted", which trips `getState:347 — This thread has not been adopted`.
+ * Going through the real app process means the app's own Dispatchers.Main owns Filament,
+ * exactly as in production.
+ *
+ * **Pulling screenshots**:
+ * ```bash
+ * adb pull /sdcard/Download/sceneview-qa/ tools/qa-screenshots/interactions/
+ * ```
+ *
+ * JPEGs are written directly to the public `Download/sceneview-qa/` folder via the
+ * MediaStore API (not `java.io.File` — scoped storage blocks that for third-party apps
+ * on API 30+, and the app-private `getExternalFilesDir()` gets wiped when
+ * `connectedAndroidTest` uninstalls the demo APK).
+ */
+@RunWith(AndroidJUnit4::class)
+class DemoInteractionTest {
+
+    private val context: Context = ApplicationProvider.getApplicationContext()
+    private val device: UiDevice =
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+    private val pkg = "io.github.sceneview.demo"
+    private val timeout = 10_000L
+
+    @Before
+    fun goHome() {
+        device.pressHome()
+    }
+
+    @After
+    fun teardown() {
+        device.pressHome()
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /**
+     * Saves a full-device screenshot as JPEG to `Download/sceneview-qa/<name>.jpg` via
+     * the MediaStore API (the only post-uninstall-persistent location a third-party app
+     * can write to on scoped-storage Android without special permissions).
+     *
+     * `UiDevice.takeScreenshot` always writes PNG regardless of extension / `quality`
+     * parameter (the int is the PNG deflate level, not a JPEG quality). A 1080×2400 PNG
+     * at ~700 kB × 86 captures = 60 MB per run. Going through `Bitmap.compress(JPEG, 75)`
+     * cuts that to ~200 kB per shot at indistinguishable visual quality on Filament +
+     * UI chrome content.
+     *
+     * The tmp PNG is staged in the app-private external dir (free-scoped-storage, wiped
+     * on uninstall), decoded, recompressed as JPEG, then inserted into MediaStore.Downloads.
+     */
+    private fun screenshot(name: String) {
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val tmpDir = File(targetContext.getExternalFilesDir(null), "sceneview-qa-tmp")
+        if (!tmpDir.exists()) tmpDir.mkdirs()
+        val tmpPng = File(tmpDir, ".tmp_$name.png")
+        device.takeScreenshot(tmpPng)
+        val bmp = BitmapFactory.decodeFile(tmpPng.absolutePath)
+            ?: error("Failed to decode screenshot PNG for '$name'")
+
+        val resolver = targetContext.contentResolver
+        val filename = "$name.jpg"
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val selection = "${MediaStore.Downloads.RELATIVE_PATH}=? AND " +
+            "${MediaStore.Downloads.DISPLAY_NAME}=?"
+        val args = arrayOf("Download/sceneview-qa/", filename)
+        resolver.query(collection, arrayOf(MediaStore.Downloads._ID), selection, args, null)
+            ?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    val oldUri = android.content.ContentUris.withAppendedId(collection, id)
+                    resolver.delete(oldUri, null, null)
+                }
+            }
+
+        val pending = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, filename)
+            put(MediaStore.Downloads.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/sceneview-qa/")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(collection, pending)
+            ?: error("MediaStore insert returned null for '$name'")
+        resolver.openOutputStream(uri)?.use { out ->
+            bmp.compress(Bitmap.CompressFormat.JPEG, 75, out)
+        } ?: error("MediaStore openOutputStream returned null for '$name'")
+        resolver.update(
+            uri,
+            ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
+            null,
+            null,
+        )
+        bmp.recycle()
+        tmpPng.delete()
+    }
+
+    /**
+     * Launches [DemoHostActivity] for the given demo id (see [ALL_DEMOS]),
+     * bypassing the home list scroll entirely. Waits until the demo's title bar appears.
+     *
+     * The expected title is resolved from [ALL_DEMOS] via `context.getString(titleRes)`
+     * rather than passed as a literal — so the `By.text(...)` match stays in sync with
+     * the string resources and never drifts when a demo title is renamed.
+     */
+    private fun openDemo(demoId: String) {
+        val titleRes = ALL_DEMOS.firstOrNull { it.id == demoId }?.titleRes
+            ?: error("openDemo: demo id '$demoId' is not registered in ALL_DEMOS")
+        val expectedTitle = context.getString(titleRes)
+        val intent = Intent().apply {
+            setClassName(pkg, "$pkg.DemoHostActivity")
+            putExtra(DemoHostActivity.EXTRA_DEMO_ID, demoId)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        // Wait for the demo's scaffold title to render (confirms Compose + Filament wired up)
+        device.wait(Until.hasObject(By.text(expectedTitle)), timeout)
+        // First-frame Filament setup on Apple M3 Metal translator: Engine resolve ~200 ms +
+        // material link ~300 ms + async GLB decode ~4-5 s + GPU upload ~1 s + first PBR pass
+        // a few hundred ms. 6 s caught most cases but on cold-boot the first PBR frame can
+        // arrive at 8-9 s, leaving a black SurfaceView in the screenshot. 10 s covers the
+        // worst case and adds ~96 s across the 24-test suite (~25 % overhead, acceptable
+        // for guaranteed visual capture).
+        Thread.sleep(10000)
+    }
+
+    /**
+     * Since DemoScaffold v2 (#1154), per-demo controls live inside a ModalBottomSheet
+     * launched by a "demo-settings-fab" FloatingActionButton anchored bottom-end of the
+     * screen. Tests that drive these controls must open the sheet first so the chips /
+     * sliders / toggles are in the visible UI tree.
+     *
+     * Targeted by the stable test-tag (TestTag("demo-settings-fab")) which avoids relying
+     * on the icon's contentDescription string.
+     *
+     * Returns silently if the FAB is not present (demos with `controls = null`).
+     */
+    private fun openSettingsSheet() {
+        val fab = device.findObject(By.res("demo-settings-fab"))
+            ?: device.findObject(By.desc("Demo settings"))
+            ?: return
+        fab.click()
+        // Sheet slide-in animation ~300 ms + first composition of controls ~200 ms.
+        Thread.sleep(700)
+    }
+
+    private fun tap(text: String) {
+        // DemoScaffold v2 (#1154): controls live inside a ModalBottomSheet that
+        // we must open first. Try opening it if the target isn't already visible.
+        if (!device.wait(Until.hasObject(By.text(text)), 1500)) {
+            openSettingsSheet()
+        }
+        // First try without scrolling (most controls are above the fold). If the target
+        // isn't visible, scroll the controls panel up — the controls Column wraps demos
+        // with many controls and the bottom rows (e.g. AnimationDemo's Loop/Once chips)
+        // sit below the fold on the Pixel_7a AVD's 1080x2400 viewport.
+        // 3 s wait covers Compose's recomposition tail when run as part of the larger
+        // suite, where state from a previous test (Filament Engine, NavHost, etc.) may
+        // still be settling.
+        if (!device.wait(Until.hasObject(By.text(text)), 3000)) {
+            scrollControlsToFind(text)
+        }
+        // After scrolling, give Compose another beat to draw + lay out the newly-visible
+        // chips before findObject — without this, on slow emulator runs the
+        // AccessibilityNodeInfo tree can lag the visible state by 100-300 ms.
+        device.wait(Until.hasObject(By.text(text)), 2000)
+        val node = device.findObject(By.text(text))
+            ?: error("Clickable '$text' not found on screen")
+        // Text inside a FilterChip / Button / Card is not clickable — walk up to the
+        // nearest clickable ancestor so the onClick handler actually fires.
+        val clickable = generateSequence(node) { it.parent }
+            .firstOrNull { it.isClickable } ?: node
+        clickable.click()
+        Thread.sleep(800)
+    }
+
+    /**
+     * Swipes the controls panel up to bring [text] into view. Some demos have very
+     * tall controls panels (camera chips + model chips + playback + speed slider +
+     * loop/once chips for AnimationDemo, or sliders + intensity for environment) that
+     * push the lower rows below the AVD's 1080×2400 viewport.
+     *
+     * Uses `UiScrollable.scrollIntoView` — the purpose-built API that walks the
+     * accessibility tree to find a scroll container, drives the gesture, and
+     * confirms the target is visible. We scope it to the bottom-half of the screen
+     * (the controls panel) by anchoring on the `Camera` / `Mode` / `Playback` label
+     * that every demo's controls section starts with — but if no such anchor exists
+     * we fall back to a generic shell `input swipe` repeated up to 5 times.
+     */
+    private fun scrollControlsToFind(text: String, maxSwipes: Int = 5) {
+        // Try UiScrollable first — drives a real synthesized gesture against the
+        // first scrollable container under the visible window.
+        val scrollable = UiScrollable(UiSelector().scrollable(true))
+        if (scrollable.exists()) {
+            try {
+                scrollable.flingForward()
+                if (device.hasObject(By.text(text))) return
+                scrollable.scrollTextIntoView(text)
+                if (device.hasObject(By.text(text))) return
+            } catch (_: Throwable) {
+                // Fall through to shell-input swipe.
+            }
+        }
+        // Shell-input swipe fallback: direct adb-style gesture, runs as shell user
+        // and bypasses any Compose-level event filtering. This is the path that
+        // actually works against `Column { verticalScroll(...) }` on the AVD.
+        val w = device.displayWidth
+        val h = device.displayHeight
+        val midX = w / 2
+        val startY = (h * 0.96).toInt()
+        val endY = (h * 0.71).toInt()
+        repeat(maxSwipes) {
+            if (device.hasObject(By.text(text))) return
+            device.executeShellCommand("input swipe $midX $startY $midX $endY 250")
+            // Allow the input events to be processed AND the verticalScroll to settle
+            // before re-checking visibility.
+            Thread.sleep(700)
+            device.waitForIdle(1000)
+        }
+    }
+
+    /**
+     * Drags a Compose [Slider] whose label starts with [labelPrefix]. Prefix (not full text)
+     * because slider labels typically include the current value (`"Density: 0.15"`) which
+     * changes each frame during a drag, so looking up the exact label after a drag is flaky.
+     *
+     * [fraction] is in `[0, 1]` — 0 drags the thumb to the minimum end, 1 to the maximum.
+     */
+    /**
+     * Taps a view whose accessibility content-description matches [desc]. Used for icon-only
+     * buttons (Play / Pause, etc.) that have no visible text label — `tap(text)` can't find
+     * them. The underlying `IconButton` is already clickable so no ancestor walk is needed.
+     */
+    private fun tapByDesc(desc: String) {
+        // DemoScaffold v2 (#1154): if the icon button lives inside the controls
+        // sheet, the sheet must be open. The settings FAB is also targeted via
+        // contentDescription "Demo settings" — never confuse it for a demo icon.
+        if (desc != "Demo settings" &&
+            !device.wait(Until.hasObject(By.desc(desc)), 1500)
+        ) {
+            openSettingsSheet()
+        }
+        device.wait(Until.hasObject(By.desc(desc)), timeout)
+        val node = device.findObject(By.desc(desc))
+            ?: error("Element with contentDescription '$desc' not found on screen")
+        node.click()
+        Thread.sleep(800)
+    }
+
+    /**
+     * Types [text] into a Compose `OutlinedTextField`, replacing anything already there.
+     *
+     * [currentValue] is the *current text* of the field (not its label). UiObject2.text
+     * = … drives the accessibility setText action which handles focus + IME + commit
+     * atomically — the older `click + input keyevent` recipe did not move focus on a
+     * Compose `OutlinedTextField` (the synthetic click landed on the BasicText composable
+     * rather than the underlying AndroidComposeView's focus target) and every keyevent
+     * that followed was dispatched to an unfocused surface.
+     */
+    private fun typeInto(currentValue: String, text: String) {
+        // DemoScaffold v2 (#1154): text fields live inside the controls sheet.
+        if (!device.hasObject(By.text(currentValue))) {
+            openSettingsSheet()
+        }
+        val field = device.wait(Until.findObject(By.text(currentValue)), timeout)
+            ?: error("Text field with current value '$currentValue' not found")
+        field.text = text
+        Thread.sleep(600)  // let onValueChange propagate to state + recomposition
+    }
+
+    // ── Camera-gesture helpers ────────────────────────────────────────────────────
+    //
+    // Every helper here targets the 3D viewport region (the top ~55 % of the screen —
+    // below the top-app-bar, above the scaffold controls column). None of them touch UI
+    // chrome, so they exercise the CameraManipulator / gesture layer of SceneView without
+    // accidentally clicking a chip or slider.
+
+    private val viewportCenterX get() = device.displayWidth / 2
+    private val viewportCenterY get() = (device.displayHeight * 0.30).toInt()
+
+    /** Horizontal orbit via one-finger drag. [pixels] is signed — positive = right. */
+    private fun orbit(pixels: Int = 300) {
+        device.swipe(
+            viewportCenterX, viewportCenterY,
+            viewportCenterX + pixels, viewportCenterY,
+            30,
+        )
+        Thread.sleep(600)
+    }
+
+    /** Vertical tilt via one-finger drag. Positive = down (camera pitches up). */
+    private fun tilt(pixels: Int = 200) {
+        device.swipe(
+            viewportCenterX, viewportCenterY,
+            viewportCenterX, viewportCenterY + pixels,
+            30,
+        )
+        Thread.sleep(600)
+    }
+
+    /**
+     * Two-finger pinch centred on the viewport. [open] = true for zoom-in (fingers move
+     * apart), false for zoom-out. [percent] is the fraction of the viewport the pinch
+     * spans (0..1). 0.25 is enough to drive the CameraManipulator visibly while staying
+     * below the dolly distance at which the camera clips into the model.
+     *
+     * We bypass the Compose surface-view hit target (UiObject2 on Compose's SurfaceView
+     * is finicky) and drive the pinch via the root-level [UiObject2] obtained from the
+     * package's top window. The gesture is accessibility-dispatched, so it reaches the
+     * underlying GestureDetector + CameraManipulator in SceneView exactly the same way
+     * a real user's pinch would.
+     */
+    private fun pinch(open: Boolean, percent: Float = 0.4f) {
+        val root = device.findObject(By.pkg(pkg).depth(0))
+            ?: error("Could not find root UiObject2 for package '$pkg'")
+        if (open) root.pinchOpen(percent) else root.pinchClose(percent)
+        Thread.sleep(600)
+    }
+
+    /** Quick double-tap at viewport centre — the CameraManipulator reset / focus shortcut. */
+    private fun doubleTapViewport() {
+        device.click(viewportCenterX, viewportCenterY)
+        Thread.sleep(60)
+        device.click(viewportCenterX, viewportCenterY)
+        Thread.sleep(400)
+    }
+
+    private fun dragSlider(labelPrefix: String, fraction: Float) {
+        // DemoScaffold v2 (#1154): slider labels live inside the controls sheet.
+        if (!device.hasObject(By.textStartsWith(labelPrefix))) {
+            openSettingsSheet()
+        }
+        val labelNode = device.findObject(By.textStartsWith(labelPrefix))
+            ?: error("Slider label starting with '$labelPrefix' not found on screen")
+        val b = labelNode.visibleBounds
+        // Slider track: ~48 dp below the label baseline on Material 3, spanning the scaffold
+        // controls column (~92% of screen width in most demos).
+        val density = device.displayWidth / 411f  // Pixel 7a is 411 dp wide
+        val trackY = b.bottom + (20 * density).toInt()  // ~20 dp below the label
+        val trackLeft = (device.displayWidth * 0.04f).toInt()
+        val trackRight = (device.displayWidth * 0.96f).toInt()
+        val targetX = trackLeft + ((trackRight - trackLeft) * fraction.coerceIn(0f, 1f)).toInt()
+        device.swipe((trackLeft + trackRight) / 2, trackY, targetX, trackY, 30)
+        Thread.sleep(800)
+    }
+
+    /**
+     * [dragSlider] for a [io.github.sceneview.sample.ui.LabeledSlider], which merges its
+     * label, its value readout and its track into a **single** semantics node so TalkBack
+     * announces the value once instead of twice. There is therefore no `Text` node to match
+     * on — the handle is the merged node's contentDescription, `"<label>, <value>"` — and
+     * the node's bounds cover the whole control, so the track is found relative to its
+     * bottom rather than to a label baseline.
+     */
+    private fun dragSliderByDesc(labelPrefix: String, fraction: Float) {
+        if (!device.hasObject(By.descStartsWith(labelPrefix))) {
+            openSettingsSheet()
+        }
+        device.wait(Until.hasObject(By.descStartsWith(labelPrefix)), 3000)
+        val node = device.findObject(By.descStartsWith(labelPrefix))
+            ?: error("Slider with contentDescription starting with '$labelPrefix' not found")
+        val b = node.visibleBounds
+        val density = device.displayWidth / 411f  // Pixel 7a is 411 dp wide
+        // Material 3 slider track sits ~24 dp above the control's bottom edge.
+        val trackY = b.bottom - (24 * density).toInt()
+        val trackLeft = (device.displayWidth * 0.04f).toInt()
+        val trackRight = (device.displayWidth * 0.96f).toInt()
+        val targetX = trackLeft + ((trackRight - trackLeft) * fraction.coerceIn(0f, 1f)).toInt()
+        device.swipe((trackLeft + trackRight) / 2, trackY, targetX, trackY, 30)
+        Thread.sleep(800)
+    }
+
+    // ── 1. Lighting — the three rigs ──────────────────────────────────────────
+
+    @Test
+    fun lighting_allThreeRigs() {
+        // #3496 — the demo is rebuilt around three *rigs* over one shared stage:
+        // Image (an HDR environment and nothing else), Studio (a three-point rig of
+        // analytic lights) and Sun (`DynamicSkyNode` on a clock). It opens on Image.
+        openDemo("lighting")
+        screenshot("01_lighting_image_default")
+
+        // ── Image rig — environment swatches, then the rotation slider ────────
+        // Swatches are circles, so they carry no text: they are reached by the
+        // `contentDescription` the demo sets to the environment's label.
+        tapByDesc("Sunset"); screenshot("01a_lighting_image_sunset")
+        tapByDesc("Overcast"); screenshot("01b_lighting_image_overcast")
+        tapByDesc("Studio"); screenshot("01c_lighting_image_studio")
+        // Rotating turns the lighting only, so the control is live only once the
+        // painted sky is hidden — the dock's Sky item is what hides it.
+        tap("Sky")
+        dragSlider("Environment rotation", fraction = 0.35f)
+        screenshot("01d_lighting_image_rotated")
+        tap("Sky")
+
+        // ── Studio rig — key angle, intensity, colour, fill and rim ───────────
+        tap("Studio")
+        screenshot("02_lighting_studio_default")
+        dragSlider("Key angle", fraction = 0.75f); screenshot("02a_lighting_key_angle")
+        dragSlider("Key intensity", fraction = 1.0f); screenshot("02b_lighting_key_max")
+        dragSlider("Key intensity", fraction = 0.0f); screenshot("02c_lighting_key_min")
+        tapByDesc("Tungsten"); screenshot("02d_lighting_key_tungsten")
+        tapByDesc("Daylight"); screenshot("02e_lighting_key_daylight")
+        tap("Fill light"); screenshot("02f_lighting_fill_off")
+        tap("Rim light"); screenshot("02g_lighting_rim_off")
+
+        // ── Sun rig — the hour drives colour, height, intensity and the sky ───
+        tap("Sun")
+        screenshot("03_lighting_sun_default")
+        dragSlider("Time of day", fraction = 0.05f); screenshot("03a_lighting_sun_night")
+        dragSlider("Time of day", fraction = 0.5f); screenshot("03b_lighting_sun_midday")
+        dragSlider("Haze", fraction = 1.0f); screenshot("03c_lighting_sun_hazy")
+
+        // Exposure belongs to the camera, so it is the one control on every rig.
+        dragSlider("Exposure", fraction = 1.0f); screenshot("04_lighting_exposure_max")
+        dragSlider("Exposure", fraction = 0.0f); screenshot("04a_lighting_exposure_min")
+    }
+
+    // ── 3. Physics ─────────────────────────────────────────────────────────────
+    // #2239 Batch 3 — `physics` consolidated into `animation-physics` (Physics tab).
+    // Covered by `animationPhysics_allTabs` below, which taps the Physics tab and
+    // exercises Drop / Drop 10 / Reset.
+
+    // ── 4. Geometry Primitives — 4 shape chips ────────────────────────────────
+
+    @Test
+    fun geometryPrimitives_allShapes() {
+        openDemo("geometry")
+        screenshot("15_geometry_cube_default")
+
+        tap("Sphere")
+        screenshot("16_geometry_sphere_on")
+
+        tap("Cylinder")
+        screenshot("17_geometry_cylinder_on")
+
+        tap("Plane")
+        screenshot("18_geometry_plane_on")
+
+        tap("Cube")
+        screenshot("19_geometry_cube_off")
+    }
+
+    // ── 5. Custom Geometry — live mesh regeneration ───────────────────────────
+    //
+    // #3423 rebuilt this demo from scratch: it no longer has the Custom Mesh /
+    // Shape Extrude segmented toggle, and there is nothing left to auto-rotate
+    // or scale. It generates a torus knot's vertices at runtime, so what there
+    // is to exercise is the three parameters that rebuild the mesh plus the
+    // dock's Wireframe toggle. The retired `custom-mesh` and `shape` deep-link
+    // ids still resolve here through `DEMO_ID_ALIASES`.
+    //
+    // The sliders are driven through their contentDescription, not their text:
+    // `LabeledSlider` merges its label, value and track into a single semantics
+    // node ("Segments, 168 rings") so a screen reader announces the value once.
+
+    @Test
+    fun customGeometry_wireframeToggle() {
+        openDemo("custom-geometry")
+        screenshot("20_customGeometry_solid_default")
+
+        // Wireframe is a DockItem, not a sheet control — it lives in the bottom
+        // floating toolbar and is reached by its content description.
+        tapByDesc("Wireframe")
+        screenshot("21_customGeometry_wireframe_on")
+
+        tapByDesc("Wireframe")
+        screenshot("22_customGeometry_wireframe_off")
+
+        // Orbit the camera by swiping horizontally on the SurfaceView area.
+        device.swipe(
+            device.displayWidth / 2, device.displayHeight / 3,
+            device.displayWidth / 2 + 250, device.displayHeight / 3,
+            20
+        )
+        Thread.sleep(600)
+        screenshot("23_customGeometry_after_orbit_drag")
+    }
+
+    @Test
+    fun customGeometry_allThreeParameters() {
+        openDemo("custom-geometry")
+
+        // Segments — the extremes are the demo's point: 24 rings is visibly
+        // faceted, 264 is smooth, and the status pill counts both.
+        dragSliderByDesc("Segments", fraction = 0.0f)
+        screenshot("24_customGeometry_segments_min")
+        dragSliderByDesc("Segments", fraction = 1.0f)
+        screenshot("25_customGeometry_segments_max")
+
+        dragSliderByDesc("Twist", fraction = 1.0f)
+        screenshot("26_customGeometry_twist_max")
+        dragSliderByDesc("Twist", fraction = 0.0f)
+        screenshot("27_customGeometry_twist_none")
+
+        dragSliderByDesc("Ripple", fraction = 1.0f)
+        screenshot("28_customGeometry_ripple_max")
+        dragSliderByDesc("Ripple", fraction = 0.0f)
+        screenshot("29_customGeometry_ripple_none")
+    }
+
+    // ── 7. Models — all 3 segmented tabs ──────────────────────────────────────
+
+    @Test
+    fun modelViewer_allTabs() {
+        // #2239 Batch 5 — `multi-model` and `scene-gallery` consolidated into the
+        // existing `model-viewer` entry (the flagship umbrella, kept live) with a
+        // 3-way segmented toggle. One test taps through every tab so each merged
+        // half is exercised (the unified demo opens on its default Single Model tab).
+        openDemo("model-viewer")
+
+        // ── Single Model tab (default landing tab) — bundled hero helmet ──────
+        screenshot("27_models_single_default")
+
+        // ── Multi-Model tab — themed "Park" scene + per-model visibility chips ─
+        tap("Models")
+        tap("Park scene")
+        screenshot("28_models_multi_default")
+        // The visibility chips are labelled from the resolved `park` slug's
+        // `displayName` (#2933) — "Oak Trees" is slot 1's registry entry, not a
+        // hardcoded noun. If SampleAssets renames or replaces that slug this tap
+        // has to follow it; the label is the catalogue's, not the demo's.
+        tap("Oak Trees")   // toggle a node off / on so the chips are exercised
+        screenshot("28a_models_multi_no_hero")
+        tap("Oak Trees")
+        screenshot("28b_models_multi_hero_back")
+
+        // ── Gallery tab — chip-picked themed Sketchfab model ──────────────────
+        tap("Models")
+        tap("Browse online models…")
+        screenshot("29_models_gallery_default")
+    }
+
+    // ── 8. Post Processing — 4 toggle rows ────────────────────────────────────
+    // #2239 Batch 2 folded `post-processing` into `lighting-lab`; since #3496 the
+    // lab has no tabs and its SSAO / MSAA / FXAA / dithering switches are driven by
+    // `lightingLab_benchControls` below.
+
+    // ── 8. Lighting Lab — every knob on one bench ─────────────────────────────
+
+    @Test
+    fun lightingLab_benchControls() {
+        // #3496 — the lab's five modes (Sky, Environment, Reflections, Post-FX, Fog)
+        // are gone: one fixed key over a studio HDR, and every knob live at once on
+        // the same frame. `dynamic-sky` moved to `lighting`'s Sun rig, which
+        // `lighting_allThreeRigs` covers.
+        openDemo("lighting-lab")
+        screenshot("31_lab_default")
+
+        // ── Camera ────────────────────────────────────────────────────────────
+        dragSlider("Exposure", fraction = 1.0f); screenshot("31a_lab_exposure_max")
+        dragSlider("Exposure", fraction = 0.0f); screenshot("31b_lab_exposure_min")
+        dragSlider("Exposure", fraction = 0.3f)
+
+        // ── Environment — intensity, sky, rotation, local reflection probe ────
+        dragSlider("Environment intensity", fraction = 1.0f)
+        screenshot("32_lab_ibl_max")
+        dragSlider("Environment intensity", fraction = 0.1f)
+        screenshot("32a_lab_ibl_min")
+        dragSlider("Environment rotation", fraction = 0.5f)
+        screenshot("32b_lab_ibl_rotated")
+        tap("Draw the sky"); screenshot("32c_lab_sky_on")
+        tap("Draw the sky")
+        tap("Local reflection probe"); screenshot("32d_lab_probe_on")
+        dragSlider("Probe radius", fraction = 1.0f); screenshot("32e_lab_probe_wide")
+        tap("Local reflection probe")
+
+        // ── Frame — SSAO, fog and its presets, then the AA switches ───────────
+        tap("Ambient occlusion"); screenshot("33_lab_ssao_off")
+        tap("Ambient occlusion")
+        tap("Fog"); screenshot("33a_lab_fog_on")
+        dragSlider("Fog density", fraction = 1.0f); screenshot("33b_lab_fog_dense")
+        tap("Warm haze"); screenshot("33c_lab_fog_warm")
+        tap("Smoke"); screenshot("33d_lab_fog_smoke")
+        tap("Mist")
+        tap("Fog")
+        tap("MSAA 4×"); screenshot("34_lab_msaa_on")
+        tap("MSAA 4×")
+        tap("FXAA"); screenshot("34a_lab_fxaa_off")
+        tap("FXAA")
+        screenshot("35_lab_back_to_defaults")
+    }
+
+    // ── 8b. Materials — all 3 segmented tabs ─────────────────────────
+
+    @Test
+    fun materials_allTabs() {
+        // #3495 rebuilt the demo as a material studio: a nine-sphere Gallery, an Inspect
+        // mode with live metallic / roughness / extension sliders, and the Occlusion
+        // section carried over by #2239 Batch 4. One test walks every tab so each is
+        // exercised (the demo opens on Gallery).
+        openDemo("materials")
+
+        // ── Gallery (default landing tab) — the nine-material wall ─────────────
+        screenshot("38_materials_gallery_default")
+
+        // ── Inspect — one sphere, its parameters on live sliders ────────────
+        tap("Inspect")
+        screenshot("38a_materials_inspect_default")
+        // Picking a second material is also what arms Compare: the chip tap is the
+        // interaction, and it re-seeds the three sliders from the new material.
+        tap("Crystal")
+        screenshot("38b_materials_inspect_crystal")
+        tap("Night")
+        screenshot("38c_materials_inspect_night_environment")
+
+        // ── Occlusion — invisible depth-writing occluder plane ──────────────
+        // The "Occluder visible" row is `toggleable`, so `tap(text)` reaches the Switch
+        // from its label — the section opens on the occluding state and the tap shows
+        // the ground-truth plate.
+        tap("Occlusion")
+        screenshot("38d_materials_occlusion_default")
+        tap("Occluder visible")
+        screenshot("38e_materials_occlusion_plate_visible")
+    }
+
+    // ── 9. Debug Overlay — preset reset ───────────────────────────────────────
+
+    @Test
+    fun debugOverlay_resetPreset() {
+        // The "Show Overlay" toggle was removed when the demo became a stress-test
+        // dashboard (the FPS/Frame/Nodes/Tris stats overlay is now always-on). The Reset
+        // button is the only stable interactive control — we tap it to confirm the spawn
+        // count drops back to the baseline preset without crashing the scene.
+        openDemo("debug-overlay")
+        screenshot("36_debugOverlay_initial")
+
+        tap("Reset")
+        screenshot("37_debugOverlay_after_reset")
+    }
+
+    // ── 10. Animation & Physics — both segmented tabs ─────────────────────────
+
+    @Test
+    fun animationPhysics_allTabs() {
+        // #2239 Batch 3 — `animation` and `physics` consolidated into
+        // `animation-physics` with a 2-way segmented toggle. One test taps through
+        // both tabs so each merged half is exercised (the unified demo opens on its
+        // default Animation tab).
+        openDemo("animation-physics")
+
+        // ── Animation tab (default landing tab) — loop / once / speed / playback ──
+        screenshot("39_animation_loop_default")
+        tap("Once")
+        screenshot("40_animation_once")
+        tap("Loop")
+        screenshot("41_animation_loop_back")
+        // Speed slider sweep — slow / fast
+        dragSlider("Speed:", fraction = 0.0f); screenshot("41a_animation_speed_min")
+        dragSlider("Speed:", fraction = 1.0f); screenshot("41b_animation_speed_max")
+        // Play / Pause icon-only button — reached via contentDescription.
+        tapByDesc("Pause"); screenshot("41c_animation_paused")
+        tapByDesc("Play"); screenshot("41d_animation_playing")
+
+        // ── Physics tab — drop + reset ────────────────────────────────────────
+        tap("Physics")
+        screenshot("41e_physics_initial")
+        tap("Drop")
+        Thread.sleep(1500)  // let physics settle
+        screenshot("41f_physics_dropped_1")
+        tap("Drop")
+        Thread.sleep(400)
+        tap("Drop")
+        Thread.sleep(2000)
+        screenshot("41g_physics_dropped_3")
+        tap("Reset")
+        Thread.sleep(1500)
+        screenshot("41h_physics_reset")
+    }
+
+    // ── 11. Environment Gallery ───────────────────────────────────────────────
+    // #2239 Batch 2 — `environment` consolidated into `lighting-lab`; #3496 then
+    // moved the HDR picker itself to `lighting`'s Image rig, where the deep link now
+    // lands. Covered by `lighting_allThreeRigs`, which cycles the environment
+    // swatches.
+
+    // ── 12. 2D in 3D — Compose cards on ViewNode quads ────────────────────
+    //
+    // #3424 rebuilt this demo from scratch around `ViewNode`, so the four
+    // segmented tabs (Text / Image / Video / Billboard) that used to be driven
+    // from sections 20, 21 and 22b below are gone; the retired `text`, `image`,
+    // `video` and `billboard` deep-link ids still resolve here through
+    // `DEMO_ID_ALIASES`, but none of them pre-selects anything any more.
+    //
+    // What replaced them: one turntable scene with three world-anchored call-out
+    // cards and one live control card, plus the dock's Billboard toggle, the
+    // Always-on-top switch and two sliders.
+    //
+    // The retired Billboard tab was also the home of the `@Ignore`d
+    // `billboard_visibilityChips`, parked since 2026-04-23 on a Filament UAF
+    // (`Invalid texture still bound to MaterialInstance`, SIGABRT — #887) that
+    // fired when Compose dropped a `BillboardNode`/`ImageNode` and its
+    // `MaterialInstance` was destroyed with a texture still bound. Neither node
+    // type is in this demo any more, so the test goes with the scene it drove;
+    // #887 stays open on `sceneview/` and is not claimed fixed here.
+
+    @Test
+    fun twoDInThreeD_billboardAndDepth() {
+        openDemo("two-d-in-three-d")
+        screenshot("49_twoDInThreeD_default")
+
+        // Billboard is a DockItem, not a sheet control — it lives in the bottom
+        // floating toolbar and is reached by its content description.
+        tapByDesc("Billboard")
+        screenshot("50_twoDInThreeD_fixed_orientation")
+
+        tapByDesc("Billboard")
+        screenshot("51_twoDInThreeD_billboarded_again")
+
+        // Depth: off, the model swallows the far card; on, the card floats over it.
+        tap("Always on top")
+        screenshot("52_twoDInThreeD_always_on_top")
+
+        tap("Always on top")
+        screenshot("52a_twoDInThreeD_depth_tested")
+    }
+
+    @Test
+    fun twoDInThreeD_cardSizeAndDistance() {
+        openDemo("two-d-in-three-d")
+
+        // Both sliders are LabeledSliders, so they are driven by contentDescription.
+        dragSliderByDesc("Card size", fraction = 1.0f)
+        screenshot("52b_twoDInThreeD_cards_max")
+        dragSliderByDesc("Card size", fraction = 0.0f)
+        screenshot("52c_twoDInThreeD_cards_min")
+        dragSliderByDesc("Card size", fraction = 0.5f)
+
+        dragSliderByDesc("Card distance", fraction = 1.0f)
+        screenshot("52d_twoDInThreeD_cards_far")
+        dragSliderByDesc("Card distance", fraction = 0.0f)
+        screenshot("52e_twoDInThreeD_cards_near")
+    }
+
+    // ── 13. Secondary Camera — 4 PiP angle chips ──────────────────────────────
+
+    @Test
+    fun secondaryCamera_pipAngles() {
+        openDemo("secondary-camera")
+        screenshot("53_secondaryCam_top_default")
+
+        // Chip labels resolved from string resources (R.string.demo_secondary_camera_chip_*,
+        // added in PR #1270) so the tap matcher stays in sync with the string resources.
+        tap(context.getString(R.string.demo_secondary_camera_chip_side))
+        screenshot("54_secondaryCam_side")
+
+        tap(context.getString(R.string.demo_secondary_camera_chip_front))
+        screenshot("55_secondaryCam_front")
+
+        tap(context.getString(R.string.demo_secondary_camera_chip_corner))
+        screenshot("56_secondaryCam_corner")
+
+        tap(context.getString(R.string.demo_secondary_camera_chip_top))
+        screenshot("57_secondaryCam_top_back")
+    }
+
+    // ── 14. Camera & Gestures — named views, camera gestures, Move mode ───────
+
+    @Test
+    fun cameraAndGestures_viewsGesturesAndMoveMode() {
+        // #3500 rebuild: the screen no longer has a "Camera Modes" / "Node Gestures"
+        // segmented toggle, an "Editable" switch or a "Reset Position" button. It is one
+        // stage with one camera: five named-view chips over the scene, a Recenter /
+        // Cinematic / Move dock, and a settings sheet with Distance, Gesture sensitivity
+        // and Inertia. The old case named controls that no longer exist.
+        openDemo("camera-gestures")
+        screenshot("57b_cameraGestures_hero")
+
+        // Camera gestures on the viewport: a one-finger drag orbits, a vertical drag
+        // tilts, a pinch dollies. The HUD names each of them while it runs.
+        orbit(pixels = 200); screenshot("58_cameraGestures_orbited")
+        tilt(pixels = 150); screenshot("59_cameraGestures_tilted")
+        pinch(open = true); screenshot("60_cameraGestures_zoomed_in")
+        pinch(open = false); screenshot("60a_cameraGestures_zoomed_out")
+
+        // Named views. Each chip flies to an angle relative to whatever has focus.
+        tap("Top"); screenshot("60b_cameraGestures_view_top")
+        tap("Front"); screenshot("60c_cameraGestures_view_front")
+        tap("Side"); screenshot("60d_cameraGestures_view_side")
+        tap("Close"); screenshot("60e_cameraGestures_view_close")
+        tap("Hero"); screenshot("60f_cameraGestures_view_hero")
+
+        // Dock: Move hands the same gestures to the focused object instead of the camera,
+        // Cinematic hands the camera to the turntable, Recenter returns to the whole stage.
+        tap(context.getString(R.string.camera_gestures_action_move))
+        screenshot("60g_cameraGestures_move_mode")
+        orbit(pixels = 200); screenshot("60h_cameraGestures_object_dragged")
+        tap(context.getString(R.string.camera_gestures_action_move))
+        screenshot("60i_cameraGestures_move_off")
+
+        tap(context.getString(R.string.camera_gestures_action_cinematic))
+        Thread.sleep(1500)
+        screenshot("60j_cameraGestures_cinematic")
+        tap(context.getString(R.string.camera_gestures_action_cinematic))
+
+        // Settings sheet: both sliders are `LabeledSlider`s (merged semantics node), so
+        // they are driven by contentDescription, not by a separate label Text node.
+        dragSliderByDesc(context.getString(R.string.camera_gestures_control_distance), fraction = 1.0f)
+        screenshot("61_cameraGestures_distance_max")
+        dragSliderByDesc(context.getString(R.string.camera_gestures_control_sensitivity), fraction = 0.0f)
+        screenshot("61a_cameraGestures_sensitivity_min")
+        tap(context.getString(R.string.camera_gestures_control_inertia))
+        screenshot("61b_cameraGestures_inertia_off")
+
+        device.pressBack()
+        tap(context.getString(R.string.camera_gestures_action_recenter))
+        screenshot("61c_cameraGestures_recentered")
+    }
+
+    // ── 15. Lines & Paths — curve chips, stroke slider, point / animate switches ──
+
+    @Test
+    fun linesPaths_fullScreen() {
+        // #3425 rebuild: the screen no longer has Line/Path visibility chips or a "Line Width"
+        // slider. It has three curve chips, a "Stroke" slider in millimetres, and two switches
+        // that are also dock toggles. The old cases named controls that no longer exist.
+        openDemo("lines-paths")
+        screenshot("62_linesPaths_spline_default")
+
+        tap("Polyline"); screenshot("63_linesPaths_curve_polyline")
+        tap("Rounded"); screenshot("64_linesPaths_curve_rounded")
+        tap("Spline"); screenshot("65_linesPaths_curve_spline")
+
+        dragSlider("Stroke", fraction = 1.0f); screenshot("70_linesPaths_stroke_max")
+        dragSlider("Stroke", fraction = 0.0f); screenshot("71_linesPaths_stroke_min")
+        dragSlider("Stroke", fraction = 0.5f); screenshot("71c_linesPaths_stroke_mid")
+
+        tap("Control Points"); screenshot("71a_linesPaths_points_hidden")
+        tap("Control Points"); screenshot("71b_linesPaths_points_shown")
+
+        tap("Animate"); screenshot("71d_linesPaths_animation_paused")
+    }
+
+    // ── 18. Dynamic Sky ───────────────────────────────────────────────────────
+    // #2239 Batch 2 — `dynamic-sky` consolidated into `lighting-lab`; #3496 moved
+    // `DynamicSkyNode` to `lighting`'s Sun rig, where the deep link now lands.
+    // Covered by `lighting_allThreeRigs` above.
+
+    // ── 19. Reflection Probes ─────────────────────────────────────────────────
+    // #2239 Batch 2 — `reflection-probes` consolidated into `lighting-lab`; since
+    // #3496 the probe is a switch plus a radius slider on the lab's one bench.
+    // Covered by `lightingLab_benchControls` above.
+
+    // ── 20/21. Image + Text Labels ─────────────────────────────
+    // #2239 Batch 1 consolidated `image` and `text` into `two-d-in-three-d`;
+    // #3424 then rebuilt that demo from scratch, so its Image and Text tabs — and
+    // the `Scale:` / `Font Size:` sliders and the "Display Text" field these two
+    // tests drove — no longer exist. Covered by `twoDInThreeD_*` in section 12.
+
+    // ── 22a. ViewNode — visible toggle + coord-tap on the in-scene card ──────
+
+    @Test
+    fun viewNode_visibleAndTapCounter() {
+        // #3329 — `picking-collision`'s two tabs are now one scene: the shapes and the
+        // Compose card share it, so there is no tab to switch to any more.
+        openDemo("picking-collision")
+        screenshot("88_viewNode_visible_default")
+
+        // ViewNode's card is rendered inside a Compose hierarchy attached to the 3D-textured
+        // quad, so UiAutomator still cannot *see* it — it has no node in the accessibility
+        // tree of the host window. It can be driven by raw coordinates though: since #2845
+        // SceneView converts the picking hit into a view pixel and dispatches the stream into
+        // that Compose tree, so a click on the quad is a real click on the card (which is
+        // `Card(onClick = …)`, with the "Tap me" Button inside it). We click three distinct
+        // positions so three genuine up-events fire (tapping the same pixel back-to-back can
+        // coalesce into a double-tap sequence on some gesture stacks); the counter must read 3.
+        // The card now floats at world y = 0.52 above the shape row, with the eye pulled back
+        // to 4.2 m (PickingLayout). Measured on the emulator at 1080x2400 for #3329: the card
+        // centre lands at 0.38 x h, spanning roughly +/-0.07 x h and +/-0.17 x w around it.
+        val cx = device.displayWidth / 2
+        val cy = (device.displayHeight * 0.38).toInt()
+        device.click(cx - 40, cy); Thread.sleep(500)
+        device.click(cx, cy + 40); Thread.sleep(500)
+        device.click(cx + 40, cy); Thread.sleep(700)
+        screenshot("89_viewNode_tapped_3")
+
+        tap("Compose card")
+        screenshot("90_viewNode_hidden")
+
+        tap("Compose card")
+        screenshot("91_viewNode_visible_back")
+    }
+
+    // ── 22b. Video ─────────────────────────────────────
+    // #2239 Batch 1 consolidated `video` into `two-d-in-three-d`; #3424's rebuild
+    // dropped the `VideoNode` tab along with the rest of them. `VideoNode` itself
+    // is unchanged and still shipped — it simply has no demo driving it here.
+
+    // ── 22c. Model Viewer — just verify the scaffold + initial render ────────
+
+    @Test
+    fun modelViewer_initialRender() {
+        openDemo("model-viewer")
+        screenshot("93_modelViewer_initial")
+    }
+
+    /**
+     * Camera-gesture coverage for the Model Viewer demo — kept in its own test so the
+     * cumulative drag + tilt state doesn't bleed into `modelViewer_initialRender`'s
+     * pristine baseline screenshot.
+     */
+    @Test
+    fun modelViewer_cameraGestures() {
+        openDemo("model-viewer")
+
+        // ── One-finger orbit (left/right) ────────────────────────────────────────────
+        orbit(pixels = 400); screenshot("93a_modelViewer_orbit_right")
+        orbit(pixels = -500); screenshot("93b_modelViewer_orbit_left")
+
+        // Back to an initial-ish framing before pitching, so the tilt screenshots show
+        // the model from above/below center (not a random place mid-orbit).
+        orbit(pixels = 100)
+
+        // ── One-finger tilt (up/down) ────────────────────────────────────────────────
+        tilt(pixels = 250); screenshot("93c_modelViewer_tilt_down")
+        tilt(pixels = -300); screenshot("93d_modelViewer_tilt_up")
+
+        // ── Two-finger pinch (zoom-out only) ────────────────────────────────────────
+        // pinchOpen on ModelViewer dollies the CameraManipulator straight into the
+        // model — the pinch percent is relative to the *root window diagonal*, which is
+        // larger than the viewport, so any >10 % spread tips the camera past the
+        // helmet and the viewport clips to black even from a fresh scene. The
+        // zoom-out direction works fine (camera dollies away), so we exercise just
+        // that + a bounded orbit+pinchClose+reopen cycle for full coverage. The
+        // zoom-in case is covered by the `gestureEditing_*` test which pinches a
+        // model node (not a manipulator) — different code path.
+        openDemo("model-viewer")
+        pinch(open = false, percent = 0.25f); screenshot("93e_modelViewer_zoom_out")
+    }
+
+    // ── 23. Collision — reset-colors button + shape taps ──────────────────────
+
+    @Test
+    fun collision_shapeTapAndReset() {
+        // #3329 — one scene now: the shape row and the Compose card share it, and the
+        // row was pulled in to x = ±0.5 with the eye at 4.2 m so it stops being clipped
+        // by the portrait viewport edges (see PickingLayout).
+        openDemo("picking-collision")
+        screenshot("85_collision_default")
+
+        val w = device.displayWidth
+        val h = device.displayHeight
+        // Measured off the emulator at 1080x2400 while validating #3329 (not projected by
+        // hand — these are the pixels the shapes actually landed on):
+        //   spheres (world y = -0.05) → 0.54 x h
+        //   cubes   (world y = -0.30) → 0.61 x h
+        //   x = -0.5 → 0.19 | -0.25 → 0.34 | 0 → 0.50 | 0.25 → 0.65 | 0.5 → 0.81
+        val sphereY = (h * 0.54).toInt()
+        val cubeY   = (h * 0.61).toInt()
+        device.click((w * 0.19).toInt(), cubeY);   Thread.sleep(300)  // cube   0
+        device.click((w * 0.34).toInt(), sphereY); Thread.sleep(300)  // sphere 1
+        device.click((w * 0.50).toInt(), cubeY);   Thread.sleep(300)  // cube   2
+        device.click((w * 0.65).toInt(), sphereY); Thread.sleep(300)  // sphere 3
+        device.click((w * 0.81).toInt(), cubeY);   Thread.sleep(400)  // cube   4
+        screenshot("86_collision_after_taps")
+
+        tap("Reset Colors")
+        screenshot("87_collision_after_reset")
+    }
+}

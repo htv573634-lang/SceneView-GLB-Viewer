@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="demo_point_and_ask_title">Point &amp; Ask</string>
+    <string name="demo_point_and_ask_subtitle">On-device Gemini Nano explains the AR scene</string>
+
+    <!-- Top status pill -->
+    <string name="demo_point_and_ask_status_checking">Checking Gemini Nano availability…</string>
+    <string name="demo_point_and_ask_status_ready">Long-press: drop a 3D prop · Tap: ask the on-device AI</string>
+    <string name="demo_point_and_ask_status_limited">Gemini Nano isn\'t ready — see below</string>
+    <string name="demo_point_and_ask_status_thinking">✦ Gemini Nano is thinking…</string>
+
+    <!-- Bottom cards -->
+    <string name="demo_point_and_ask_unavailable_title">Gemini Nano isn\'t available on this device</string>
+    <string name="demo_point_and_ask_unavailable_body">Point &amp; Ask needs Google AICore (Pixel 8 or newer, recent flagship phones). Answers run fully on-device — there is no cloud fallback, by design.</string>
+    <string name="demo_point_and_ask_download_title">Gemini Nano can run on this device — the model just needs a one-time download.</string>
+    <string name="demo_point_and_ask_download_cta">Download model</string>
+    <string name="demo_point_and_ask_downloading">Downloading Gemini Nano…</string>
+    <string name="demo_point_and_ask_downloading_progress">Downloading Gemini Nano… %1$d MB</string>
+    <string name="demo_point_and_ask_answer_source">✦ Gemini Nano · on-device</string>
+    <!-- Shown instead of answer_source when ConnectivityManager reports no active network —
+         proof the answer was produced with zero connectivity. -->
+    <string name="demo_point_and_ask_answer_source_offline">✦ Gemini Nano · on-device · no network</string>
+    <!-- Failure messages. One per distinct cause: a single catch-all string made every
+         failure mode look the same on screen and in logcat, and invited a user whose
+         device can never answer to keep tapping (#3343). -->
+    <string name="demo_point_and_ask_error">Gemini Nano couldn\'t answer — tap to try again</string>
+    <string name="demo_point_and_ask_error_capture">Couldn\'t capture the AR frame — hold still and tap again</string>
+    <string name="demo_point_and_ask_error_empty">Gemini Nano returned an empty answer — try rephrasing your question</string>
+    <string name="demo_point_and_ask_error_unavailable">Gemini Nano isn\'t available on this device</string>
+    <string name="demo_point_and_ask_error_system_update">Gemini Nano needs a system update (Android System Intelligence / AICore)</string>
+    <string name="demo_point_and_ask_error_disk_space">Not enough free storage for Gemini Nano — free some space and tap again</string>
+    <string name="demo_point_and_ask_error_busy">Gemini Nano is busy or throttled right now — tap again in a moment</string>
+    <string name="demo_point_and_ask_error_too_large">The question was too long for the on-device model — try a shorter one</string>
+    <string name="demo_point_and_ask_error_image">Gemini Nano rejected the captured frame — point at something and tap again</string>
+    <!-- The AR viewport was punched out of the read-back: camera + virtual objects missing,
+         everything else intact (#2654/#3276/#3407). -->
+    <string name="demo_point_and_ask_error_capture_layer">The AR view was missing from the captured frame — nothing for the model to look at</string>
+    <!-- The read-back was intact but flat: a black viewport, a covered lens, or a lost AR
+         layer in its opaque form. Caught before it reaches the model (#3407). -->
+    <string name="demo_point_and_ask_error_capture_blank">The captured frame was blank — Gemini Nano would have seen nothing</string>
+
+    <!-- Shown once the SAME round keeps failing. It changes the headline only: the precise
+         cause and its action stay on the card, and nothing here claims the device cannot run
+         the model — that claim is reserved for a platform report (#3407). -->
+    <string name="demo_point_and_ask_error_repeated_title">This keeps failing here</string>
+    <string name="demo_point_and_ask_error_repeated_body">Gemini Nano is installed and ready on this device — it is this step that keeps going wrong. Try aiming at a well-lit, textured surface, or reset the demo to start a clean session.</string>
+    <string name="demo_point_and_ask_error_cd">Error</string>
+
+    <!-- One concrete next step per failure (AskRecovery). -->
+    <string name="demo_point_and_ask_action_retry">Try again</string>
+    <string name="demo_point_and_ask_action_aim">Aim and try again</string>
+    <string name="demo_point_and_ask_action_rephrase">Edit the question</string>
+    <string name="demo_point_and_ask_action_storage">Free up storage</string>
+    <string name="demo_point_and_ask_action_aicore">Open system settings</string>
+
+    <!-- Capture state — the frame read-back is now a state the user can see, instead of a
+         silent gap between the tap and "thinking" (#3407). -->
+    <string name="demo_point_and_ask_status_capturing">Capturing the AR frame…</string>
+
+    <!-- Where answers come from. Stated up front rather than only in the failure copy: the
+         demo has no cloud fallback and never sends the frame anywhere (#2648). -->
+    <string name="demo_point_and_ask_engine_on_device">On-device only · Gemini Nano · the frame never leaves this phone</string>
+
+    <!-- Debug / QA build only: what was actually sent to the model, so "it sees nothing" is
+         verifiable on the spot instead of from a bug report (#3407). -->
+    <string name="demo_point_and_ask_debug_frame_label" translatable="false">Last frame sent to the model</string>
+    <string name="demo_point_and_ask_debug_frame_none" translatable="false">No frame captured yet — tap the view to ask.</string>
+    <string name="demo_point_and_ask_debug_frame_meta" translatable="false">%1$d×%2$d · %3$s · %4$s</string>
+    <string name="demo_point_and_ask_debug_frame_cd" translatable="false">Frame sent to the model</string>
+
+    <!-- Free-form question input (P3) -->
+    <string name="demo_point_and_ask_question_label">Ask anything about what you see</string>
+
+    <!-- The default prompt sent to the model when the question field is blank — English on
+         purpose (best on-device answer quality). A tap means "describe what I'm pointing at",
+         so the default asks exactly that (#3187). -->
+    <string name="demo_point_and_ask_question" translatable="false">Describe what I\'m pointing at, in one short sentence.</string>
+
+    <!-- Voice input (#3083) -->
+    <string name="demo_point_and_ask_voice_cd">Ask by voice</string>
+    <string name="demo_point_and_ask_voice_prompt">Ask a question</string>
+
+    <!-- Drop-3D mode picker (#3083) -->
+    <string name="demo_point_and_ask_prop_picker_label">Long-press drops</string>
+</resources>

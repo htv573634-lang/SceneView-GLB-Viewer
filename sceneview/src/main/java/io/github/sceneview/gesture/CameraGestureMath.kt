@@ -1,0 +1,314 @@
+package io.github.sceneview.gesture
+
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.sign
+
+
+/**
+ * Maps a two-finger pinch gesture's pointer-separation delta into a
+ * non-linear "zoom delta" suitable for translating the camera along its
+ * forward axis or shrinking a perspective FOV.
+ *
+ * Pinch-out (fingers spreading) returns a negative number and pinch-in a
+ * positive one — the convention the orbit / dolly camera manipulators
+ * consume in [CameraGestureDetector]. A power curve flattens the response
+ * once `|delta| > 1 px` so a fast pinch doesn't teleport across the scene,
+ * while small movements stay linear (1:1 px-to-zoom mapping under 1 px).
+ *
+ * @param prevSeparation pointer separation, in pixels, on the previous frame.
+ * @param currSeparation pointer separation, in pixels, on the current frame.
+ * @param speed multiplicative gain applied at the end. Higher = faster zoom.
+ * @param damping exponent (typically `0.6f .. 0.9f`) applied to large
+ *   separation deltas — `1.0` is linear, `<1.0` compresses fast pinches.
+ */
+internal fun pinchZoomDelta(
+    prevSeparation: Float,
+    currSeparation: Float,
+    speed: Float,
+    damping: Float,
+): Float {
+    val delta = prevSeparation - currSeparation
+    val absDelta = abs(delta)
+    val damped = if (absDelta > 1f) {
+        sign(delta) * exp(ln(absDelta) * damping)
+    } else {
+        delta
+    }
+    return damped * speed
+}
+
+/**
+ * The camera-to-target distance a pinch of [zoomDelta] should land on, starting from [distance].
+ *
+ * ### Why this exists (#3403 / #3426)
+ *
+ * Filament's `OrbitManipulator::scroll` is an **absolute** translation:
+ * `eye += gaze · zoomSpeed · (−scrolldelta)`. The step is a fixed number of world units no matter
+ * how far the camera is, which breaks at both ends of the scale the SDK has to cover:
+ *
+ * - **Far scenes crawl.** With the shipped `zoomSpeed = 0.05`, a full-screen 200 px pinch moved the
+ *   camera ~11 cm. On a scene framed at 5 m that is 40+ pinches to halve the distance — the
+ *   "beaucoup de gestes pour peu de zoom" of #3426.
+ * - **Near scenes teleport, then invert.** On a 5 cm model the same pinch punches the eye straight
+ *   through the orbit pivot. Filament notices (`dot(v0, v1) < 0` ⇒ `mFlipped = true`), and the next
+ *   orbit drag rebuilds the view from a **negative** bookmark distance, aiming the camera *away*
+ *   from the subject. That is #3403's "the zoom completely breaks the camera".
+ *
+ * The fix is to make a pinch a **ratio**, not a length: the same gesture covers the same fraction
+ * of the distance whether the subject is a 5 cm bee or a 155 m landscape. Zooming is therefore
+ * exponential in the gesture, `newDistance = distance · exp(zoomDelta)`, and the result is clamped
+ * into `[minDistance, maxDistance]` so the eye can never reach — let alone cross — the pivot.
+ *
+ * @param distance    Current camera-to-target distance. Non-finite / non-positive returns
+ *                    [minDistance].
+ * @param zoomDelta   Output of [pinchZoomDelta]: positive for a pinch-in (zoom **out**, distance
+ *                    grows), negative for a pinch-out.
+ * @param minDistance Closest the camera may get. Must be `> 0`.
+ * @param maxDistance Furthest the camera may get.
+ * @return The clamped new distance.
+ */
+internal fun zoomedDistance(
+    distance: Float,
+    zoomDelta: Float,
+    minDistance: Float,
+    maxDistance: Float,
+): Float {
+    val low = if (minDistance.isFinite() && minDistance > 0f) minDistance else MIN_ORBIT_DISTANCE
+    val high = if (maxDistance.isFinite() && maxDistance > low) maxDistance else low
+    if (!distance.isFinite() || distance <= 0f) return low
+    if (!zoomDelta.isFinite()) return distance.coerceIn(low, high)
+    val scaled = distance * exp(zoomDelta)
+    if (!scaled.isFinite()) return distance.coerceIn(low, high)
+    return scaled.coerceIn(low, high)
+}
+
+/**
+ * Converts a target camera-to-target [targetDistance] into the `scrolldelta` Filament's
+ * `OrbitManipulator::scroll` needs to get there from [distance].
+ *
+ * `scroll` moves the eye by `gaze · zoomSpeed · (−scrolldelta)` — along the gaze for a negative
+ * delta — so the distance changes by exactly `zoomSpeed · scrolldelta`. Inverting that gives the
+ * delta below. [zoomSpeed] is the manipulator's configured `Manipulator.Builder.zoomSpeed`.
+ */
+internal fun dollyScrollDelta(
+    distance: Float,
+    targetDistance: Float,
+    zoomSpeed: Float,
+): Float {
+    if (!zoomSpeed.isFinite() || zoomSpeed <= 0f) return 0f
+    val delta = (targetDistance - distance) / zoomSpeed
+    return if (delta.isFinite()) delta else 0f
+}
+
+/** Absolute floor for an orbit distance — the camera may never sit on its own pivot. */
+internal const val MIN_ORBIT_DISTANCE: Float = 1e-3f
+
+/**
+ * The camera-to-target distance a pinch should land on — the public, one-call form of
+ * [pinchZoomDelta] + [zoomedDistance], for camera manipulators that own their own orbit distance
+ * instead of delegating the dolly to a Filament `Manipulator`.
+ *
+ * Use it when a pinch has to *publish* a distance (a slider, a saved state) rather than translate
+ * a camera: the step is a fraction of [distance], so the gesture feels the same at every scale.
+ *
+ * ```kotlin
+ * override fun scrollUpdate(x: Int, y: Int, prev: Float, curr: Float) {
+ *     zoom = zoomedDistanceForPinch(zoom, prev, curr, minDistance = fit * 0.25f, fit * 4f)
+ * }
+ * ```
+ *
+ * @param distance       Current camera-to-target distance.
+ * @param prevSeparation Pointer separation, in pixels, on the previous frame.
+ * @param currSeparation Pointer separation, in pixels, on the current frame.
+ * @param minDistance    Closest the camera may get. Must be `> 0`.
+ * @param maxDistance    Furthest the camera may get.
+ * @param speed          Pinch gain — see
+ *                       [CameraGestureDetector.DefaultCameraManipulator.DEFAULT_PINCH_ZOOM_SPEED].
+ * @param damping        Damping exponent — see
+ *                       [CameraGestureDetector.DefaultCameraManipulator.DEFAULT_PINCH_ZOOM_DAMPING].
+ */
+@JvmOverloads
+fun zoomedDistanceForPinch(
+    distance: Float,
+    prevSeparation: Float,
+    currSeparation: Float,
+    minDistance: Float,
+    maxDistance: Float,
+    speed: Float = CameraGestureDetector.DefaultCameraManipulator.DEFAULT_PINCH_ZOOM_SPEED,
+    damping: Float = CameraGestureDetector.DefaultCameraManipulator.DEFAULT_PINCH_ZOOM_DAMPING,
+): Float = zoomedDistance(
+    distance = distance,
+    zoomDelta = pinchZoomDelta(prevSeparation, currSeparation, speed, damping),
+    minDistance = minDistance,
+    maxDistance = maxDistance,
+)
+
+/**
+ * Same pinch-delta math as [pinchZoomDelta] but interpreted as a
+ * field-of-view step instead of a translation, and bounded to a legal FOV
+ * range so the camera can never invert or flip out of [-180°, 180°].
+ *
+ * Used by perspective-FOV cameras (where "pinch to zoom" semantically means
+ * "narrow the FOV") rather than dolly cameras.
+ *
+ * @param currentFov current FOV in degrees.
+ * @param range allowed FOV interval (e.g. `30f..120f`).
+ */
+internal fun nextFov(
+    currentFov: Double,
+    prevSeparation: Float,
+    currSeparation: Float,
+    range: ClosedFloatingPointRange<Float>,
+    speed: Float,
+): Double {
+    val delta = (prevSeparation - currSeparation) * speed
+    return (currentFov + delta).coerceIn(
+        range.start.toDouble(),
+        range.endInclusive.toDouble(),
+    )
+}
+
+/**
+ * The camera-to-target distance a **double-tap** (or two-finger tap) should land on.
+ *
+ * Mirrors the Maps / Photos convention: one double-tap divides the distance by [factor], one
+ * two-finger tap multiplies it back. The step is a *ratio*, like the pinch (see [zoomedDistance]),
+ * so the gesture covers the same fraction of the framing whether the subject is a 5 cm bee or a
+ * 155 m landscape, and it is clamped into the same `[home · minFactor, home · maxFactor]` window
+ * the pinch uses — the eye can never reach, let alone cross, the orbit pivot (#3403).
+ *
+ * **The dead-end escape.** Repeatedly double-tapping a photo viewer that has no zoom-out gesture
+ * would strand the user at the closest distance. So when the camera is already sitting on the
+ * lower clamp, a zoom-**in** double-tap returns [homeDistance] instead: the gesture cycles back to
+ * the framing the scene was homed at, exactly like a second double-tap in Google Photos.
+ *
+ * @param distance          Current camera-to-target distance. Non-finite / non-positive returns
+ *                          the lower clamp.
+ * @param homeDistance      Distance the manipulator was homed at — the reference for the clamps
+ *                          and the target of the dead-end escape. Non-positive falls back to
+ *                          [distance].
+ * @param zoomIn            `true` for a double-tap (closer), `false` for a two-finger tap.
+ * @param factor            Distance ratio one tap covers. Must be `> 1`; `2` halves the distance.
+ * @param minDistanceFactor Closest the tap may take the camera, as a fraction of [homeDistance].
+ * @param maxDistanceFactor Furthest, as a multiple of [homeDistance].
+ * @return The clamped new distance. Equal to [distance] when the gesture would not move.
+ */
+internal fun doubleTapZoomedDistance(
+    distance: Float,
+    homeDistance: Float,
+    zoomIn: Boolean,
+    factor: Float,
+    minDistanceFactor: Float,
+    maxDistanceFactor: Float,
+): Float {
+    val home = if (homeDistance.isFinite() && homeDistance > 0f) homeDistance else distance
+    if (!home.isFinite() || home <= 0f) return MIN_ORBIT_DISTANCE
+    return zoomedDistanceForDoubleTap(
+        distance = distance,
+        homeDistance = home,
+        zoomIn = zoomIn,
+        minDistance = (home * minDistanceFactor)
+            .takeIf { it.isFinite() && it > 0f } ?: MIN_ORBIT_DISTANCE,
+        maxDistance = home * maxDistanceFactor,
+        factor = factor,
+    )
+}
+
+/**
+ * The camera-to-target distance a double-tap should land on — the public, absolute-bounds form of
+ * the same step [doubleTapZoomedDistance] applies internally, and the double-tap counterpart of
+ * [zoomedDistanceForPinch].
+ *
+ * Use it when your manipulator owns its own orbit distance (a slider, a saved state) instead of
+ * delegating the dolly to a Filament `Manipulator`. Pair it with [animatedZoomDistance] driven
+ * from `update(deltaTime)` to get the eased move rather than a jump cut:
+ *
+ * ```kotlin
+ * override fun doubleTapZoom(x: Int, y: Int, zoomIn: Boolean) {
+ *     animationStart = zoom
+ *     animationTarget = zoomedDistanceForDoubleTap(
+ *         distance = zoom,
+ *         homeDistance = fit,
+ *         zoomIn = zoomIn,
+ *         minDistance = fit * 0.25f,
+ *         maxDistance = fit * 4f,
+ *     )
+ *     animationElapsed = 0f
+ * }
+ *
+ * override fun update(deltaTime: Float) {
+ *     animationElapsed += deltaTime
+ *     val progress = animationElapsed / 0.3f
+ *     zoom = animatedZoomDistance(animationStart, animationTarget, progress)
+ * }
+ * ```
+ *
+ * @param distance     Current camera-to-target distance. Non-finite / non-positive returns
+ *                     [minDistance].
+ * @param homeDistance Distance the scene was framed at — the target of the dead-end escape
+ *                     described above.
+ * @param zoomIn       `true` for a double-tap (closer), `false` for a two-finger tap.
+ * @param minDistance  Closest the tap may take the camera. Must be `> 0`.
+ * @param maxDistance  Furthest the tap may take the camera.
+ * @param factor       Distance ratio one tap covers. Must be `> 1`; `2` halves the distance.
+ * @return The clamped new distance. Equal to [distance] when the gesture would not move.
+ */
+@JvmOverloads
+fun zoomedDistanceForDoubleTap(
+    distance: Float,
+    homeDistance: Float,
+    zoomIn: Boolean,
+    minDistance: Float,
+    maxDistance: Float,
+    factor: Float =
+        CameraGestureDetector.DefaultCameraManipulator.DEFAULT_DOUBLE_TAP_ZOOM_FACTOR,
+): Float {
+    val low = minDistance.takeIf { it.isFinite() && it > 0f } ?: MIN_ORBIT_DISTANCE
+    val high = maxDistance.takeIf { it.isFinite() && it > low } ?: low
+    val home = if (homeDistance.isFinite() && homeDistance > 0f) homeDistance else distance
+    if (!distance.isFinite() || distance <= 0f) return low
+    val step = if (factor.isFinite() && factor > 1f) {
+        factor
+    } else {
+        CameraGestureDetector.DefaultCameraManipulator.DEFAULT_DOUBLE_TAP_ZOOM_FACTOR
+    }
+    // Already on the lower clamp and asked to go closer: cycle back to the homed framing rather
+    // than no-op forever. `1.001` absorbs the float drift of the repeated multiply/divide.
+    if (zoomIn && distance <= low * 1.001f) return home.coerceIn(low, high)
+    val raw = if (zoomIn) distance / step else distance * step
+    if (!raw.isFinite()) return distance.coerceIn(low, high)
+    return raw.coerceIn(low, high)
+}
+
+/**
+ * Standard cubic ease-in-out on `[0, 1]`, clamped — the acceleration curve every platform's
+ * double-tap zoom uses, so the move reads as one deliberate gesture instead of a jump cut.
+ */
+fun easeInOutCubic(progress: Float): Float {
+    if (!progress.isFinite()) return 1f
+    val t = progress.coerceIn(0f, 1f)
+    return if (t < 0.5f) 4f * t * t * t else 1f - (-2f * t + 2f).let { it * it * it } / 2f
+}
+
+/**
+ * The camera-to-target distance part-way through a double-tap zoom animation.
+ *
+ * Interpolation is **geometric**, not linear: `start · (target / start)^eased(progress)`. A linear
+ * ramp on a distance looks fast at the far end and crawls at the near end, because what the eye
+ * reads is the *ratio* of successive framings, not their difference — the same reason the pinch is
+ * exponential ([zoomedDistance]). Geometric interpolation keeps the apparent zoom speed constant
+ * over the whole move.
+ *
+ * @param start    Distance the animation began at. Must be `> 0`.
+ * @param target   Distance it ends on. Must be `> 0`.
+ * @param progress Elapsed fraction in `[0, 1]`; clamped, and eased by [easeInOutCubic].
+ */
+fun animatedZoomDistance(start: Float, target: Float, progress: Float): Float {
+    if (!start.isFinite() || start <= 0f) return target
+    if (!target.isFinite() || target <= 0f) return start
+    val eased = easeInOutCubic(progress)
+    val interpolated = start * exp(ln(target / start) * eased)
+    return if (interpolated.isFinite() && interpolated > 0f) interpolated else target
+}
