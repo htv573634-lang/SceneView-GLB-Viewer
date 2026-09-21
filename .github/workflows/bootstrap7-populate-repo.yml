@@ -11,38 +11,59 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout our repo
+        uses: actions/checkout@v4
 
-      - name: Clone SceneView
+      - name: Clone official SceneView
         run: |
-          git clone --depth 1 --branch v4.37.0 \
-            https://github.com/SceneView/sceneview.git sceneview
+          git clone \
+            --depth 1 \
+            --branch v4.37.0 \
+            https://github.com/SceneView/sceneview.git \
+            upstream
 
       - name: Copy minimal project into repo
         run: |
-          cp sceneview/settings.gradle .
-          cp sceneview/build.gradle .
-          cp sceneview/gradle.properties .
-          cp sceneview/gradlew .
-          cp sceneview/gradlew.bat .
+          set -e
 
-          cp -r sceneview/gradle .
-          cp -r sceneview/samples/android-demo app
-          cp -r sceneview/samples/common common
-          cp -r sceneview/sceneview sceneview
-          cp -r sceneview/sceneview-core sceneview-core
+          cp upstream/settings.gradle .
+          cp upstream/build.gradle .
+          cp upstream/gradle.properties .
+          cp upstream/gradlew .
+          cp upstream/gradlew.bat .
+
+          cp -r upstream/gradle .
+
+          mkdir -p app common
+
+          cp -r upstream/samples/android-demo/* app/
+          cp -r upstream/samples/common/* common/
+
+          cp -r upstream/sceneview .
+          cp -r upstream/sceneview-core .
 
           find app/src/main/java/io/github/sceneview/demo/demos \
-            -type f ! -name "ModelViewerDemo.kt" -delete
+            -type f ! -name "ModelViewerDemo.kt" -delete || true
 
           rm -rf app/src/main/java/io/github/sceneview/demo/feedback
           rm -rf app/src/main/java/io/github/sceneview/demo/sketchfab
           rm -rf app/src/main/java/io/github/sceneview/demo/ai
 
-      - name: Commit files
+      - name: Show final tree
+        run: |
+          echo "================ FINAL REPO TREE ================"
+          find . \
+            -path "./.git" -prune -o \
+            -type f \
+            | sort
+
+      - name: Commit and push
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+
           git add .
-          git commit -m "Bootstrap 7: Add minimal SceneView GLB Viewer" || echo "No changes"
+
+          git commit -m "Bootstrap 7: Add minimal SceneView GLB Viewer" || echo "No changes to commit"
+
           git push
