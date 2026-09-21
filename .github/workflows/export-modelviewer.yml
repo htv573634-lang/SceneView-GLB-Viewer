@@ -1,0 +1,59 @@
+name: Export Updated ModelViewer.kt
+
+on:
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone SceneView
+        run: |
+          git clone --depth 1 --branch v4.37.0 https://github.com/SceneView/sceneview.git
+
+      - name: Patch ModelViewerDemo.kt
+        run: |
+          python3 << 'PY'
+          from pathlib import Path
+          p = Path("sceneview/samples/android-demo/src/main/java/io/github/sceneview/demo/demos/ModelViewerDemo.kt")
+          text = p.read_text()
+
+          # Single-screen entry
+          import re
+          text = re.sub(
+              r'@Composable\\s*fun ModelViewerDemo\\(onBack: \\(\\) -> Unit\\) \\{.*?\\n\\}',
+              '''@Composable
+fun ModelViewerDemo(onBack: () -> Unit) {
+    SingleModelSection(
+        onBack = onBack,
+        mode = ModelViewerMode.Single,
+        onModeChange = {}
+    )
+}''',
+              text,
+              flags=re.S,
+          )
+
+          # Enum
+          text = text.replace(
+              '''private enum class ModelViewerMode(val label: String) {
+    Single("Single Model"),
+    Multi("Multi-Model"),
+    Gallery("Gallery"),
+}''',
+              '''private enum class ModelViewerMode(val label: String) {
+    Single("GLB Viewer")
+}''',
+          )
+
+          p.write_text(text)
+          PY
+
+      - name: Upload full Kotlin file
+        uses: actions/upload-artifact@v4
+        with:
+          name: Updated-ModelViewerDemo
+          path: sceneview/samples/android-demo/src/main/java/io/github/sceneview/demo/demos/ModelViewerDemo.kt
