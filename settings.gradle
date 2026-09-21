@@ -25,13 +25,10 @@ dependencyResolutionManagement {
 
 rootProject.name = "SceneView"
 
-// Core SceneView modules used by the Android application.
+// Core SceneView modules.
 include ":sceneview-core"
 include ":sceneview"
 include ":arsceneview"
-
-// Compose Multiplatform façade.
-include ":sceneview-compose"
 
 // Documentation/snippet compile guard.
 include ":snippets-check"
@@ -42,10 +39,12 @@ include ":samples:common"
 include ":samples:android-demo"
 include ":samples:android-tv-demo"
 
-// Not included:
-// :sceneview-web      -> directory is not present in this repository.
-// :samples:desktop-demo -> directory is not present in this repository.
+// Intentionally excluded because these directories are not present
+// in this customized Android GLB Viewer repository:
 //
-// The repository also contains non-Gradle demos such as Web,
-// Flutter, React Native and iOS, which are not required for this
-// Android GLB Viewer APK.
+// :sceneview-web
+// :sceneview-compose
+// :samples:desktop-demo
+//
+// Web, Flutter, React Native and iOS demos are not required for
+// the Android GLB Viewer APK.
