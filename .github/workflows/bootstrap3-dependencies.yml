@@ -1,0 +1,38 @@
+name: Bootstrap 4 - ModelViewer Dependency Chain
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone SceneView
+        run: |
+          git clone --depth 1 https://github.com/SceneView/sceneview.git
+          cd sceneview
+
+      - name: Find ModelViewer imports
+        run: |
+          cd sceneview
+
+          echo "================ MODELVIEWER IMPORTS ================"
+          grep '^import ' samples/android-demo/src/main/java/io/github/sceneview/demo/demos/ModelViewerDemo.kt
+
+          echo
+          echo "================ REFERENCED FILES ================"
+
+          grep '^import ' samples/android-demo/src/main/java/io/github/sceneview/demo/demos/ModelViewerDemo.kt \
+            | sed 's/import //' \
+            | while read cls; do
+                path=$(echo "$cls" | sed 's/\./\//g').kt
+                find . -path "*/$path"
+              done
+
+      - name: Find MainActivity imports
+        run: |
+          cd sceneview
+
+          echo "================ MAINACTIVITY IMPORTS ================"
+          grep '^import ' samples/android-demo/src/main/java/io/github/sceneview/demo/MainActivity.kt
