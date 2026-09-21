@@ -1,0 +1,55 @@
+name: Bootstrap 2B - Android Demo Dependency Chain
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone SceneView
+        run: |
+          git clone \
+            --depth 1 \
+            --branch v4.37.0 \
+            https://github.com/SceneView/sceneview.git \
+            sceneview
+
+      - name: Show dependency chain
+        run: |
+          echo "================ SETTINGS.GRADLE ================"
+          sed -n '1,250p' sceneview/settings.gradle*
+
+          echo
+          echo "================ ROOT BUILD.GRADLE ================"
+          sed -n '1,250p' sceneview/build.gradle*
+
+          echo
+          echo "================ ANDROID DEMO BUILD.GRADLE ================"
+          sed -n '1,250p' sceneview/samples/android-demo/build.gradle*
+
+          echo
+          echo "================ SCENEVIEW BUILD.GRADLE ================"
+          sed -n '1,250p' sceneview/sceneview/build.gradle*
+
+          echo
+          echo "================ SCENEVIEW-CORE BUILD.GRADLE ================"
+          sed -n '1,250p' sceneview/sceneview-core/build.gradle*
+
+          echo
+          echo "================ BUILD SRC ================"
+          find sceneview/buildSrc -maxdepth 2 | sort
+
+      - name: Resolve Gradle dependencies
+        working-directory: sceneview
+        run: |
+          chmod +x gradlew
+
+          ./gradlew \
+            :samples:android-demo:dependencies \
+            --configuration debugRuntimeClasspath \
+            --no-daemon
