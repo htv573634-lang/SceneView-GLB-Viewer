@@ -1,0 +1,41 @@
+name: Bootstrap 9 - Remove Demo Models
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remove bundled GLB demo models
+        run: |
+          set -e
+
+          rm -f app/src/main/assets/models/khronos_damaged_helmet.glb
+          rm -f app/src/main/assets/models/khronos_fox.glb
+          rm -f app/src/main/assets/models/khronos_glam_velvet_sofa.glb
+          rm -f app/src/main/assets/models/khronos_iridescent_dish.glb
+          rm -f app/src/main/assets/models/khronos_lantern.glb
+          rm -f app/src/main/assets/models/khronos_sheen_chair.glb
+          rm -f app/src/main/assets/models/khronos_toy_car.glb
+          rm -f app/src/main/assets/models/shiba.glb
+          rm -f app/src/main/assets/models/threejs_soldier.glb
+
+      - name: Show remaining models
+        run: |
+          echo "Remaining models:"
+          find app/src/main/assets/models -type f | sort || true
+
+      - name: Commit changes
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .
+          git commit -m "Bootstrap 9: Remove bundled demo models" || echo "No changes"
+          git push
