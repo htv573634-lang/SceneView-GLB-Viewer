@@ -1,289 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- AR is optional — app works without it -->
-    <uses-feature
-        android:name="android.hardware.camera.ar"
-        android:required="false" />
-
-    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Internet kept for basic app functionality; CAMERA and AR permissions removed -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Normal permission, granted at install with no runtime prompt. Read by
-         `rememberIsNetworkAvailable` (common/CloudServiceStatus.kt) so the five
-         ARCore Cloud demos can tell "no network" apart from "Cloud rejected the
-         key" instead of both reading as the same silent failure (#3262). -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Required by `SceneViewHaptic` (rememberHapticFeedback) — the sceneview
-         library deliberately doesn't auto-merge this permission, the demo app
-         opts in so the controls sheet, AR placement confirmations, and shutter
-         button can vibrate (#1901 phase 1). When absent, every haptic call
-         becomes a silent no-op + one Log.d. -->
-    <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- Required by the Streetscape Geometry / Geospatial demos (3 of 35). ARCore
-         throws FineLocationPermissionNotGrantedException if Geospatial mode is
-         enabled without this permission — the demo composable requests it at
-         runtime before configuring the session, only on screens that need it.
-         The other 32 demos never trigger the runtime prompt.
-
-         Pair the permission with android:required="false" on the GPS feature so
-         the Play Store filter doesn't narrow the install audience to GPS-equipped
-         devices, and so reviewers see "uses precise location only when used"
-         rather than "always". (#891) -->
-    <!-- ACCESS_COARSE_LOCATION is required alongside FINE on API 31+ (CoarseFineLocation lint). -->
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-feature
-        android:name="android.hardware.location.gps"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.location"
-        android:required="false" />
-
-    <!-- Required for PermissionImpliesUnsupportedChromeOsHardware lint rule -->
-    <uses-feature
-        android:name="android.hardware.camera"
-        android:required="false" />
-
-    <!-- In-app bug reporting deliberately needs NO permission (#2120/#2188).
-         The former MediaProjection screen-recording feedback system (RECORD_AUDIO
-         + FOREGROUND_SERVICE + FOREGROUND_SERVICE_MEDIA_PROJECTION +
-         POST_NOTIFICATIONS) was removed: the rebuilt reporter uses PixelCopy on
-         the app's own window, the app's own logcat tail, and a user-driven share
-         intent — zero foreground service, zero Play Console FGS declaration. -->
-
-    <!-- Package-visibility (API 30+): without this, resolveActivity() on the
-         speech-recognition intent below always returns null, even when a
-         recognizer is installed — the bug-report sheet's mic button would
-         hide itself unconditionally instead of only when genuinely absent. -->
-    <queries>
-        <intent>
-            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
-        </intent>
-    </queries>
 
     <application
         android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:enableOnBackInvokedCallback="true"
-        android:fullBackupContent="@xml/backup_descriptor"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.SceneViewDemo">
+        android:theme="@style/Theme.SceneViewDemo"
+        tools:targetApi="31">
 
-        <!-- ARCore metadata — optional -->
-        <meta-data
-            android:name="com.google.ar.core"
-            android:value="optional" />
-
-        <!-- ARCore Cloud API key — required for Geospatial, Streetscape Geometry,
-             and Cloud Anchors. Injected from local.properties (or the ARCORE_API_KEY
-             env var) at build time via the manifestPlaceholders in build.gradle.
-             Empty by default — when blank, the demo's runtime check disables the
-             features that need it and shows a clear status message instead of
-             crashing. See samples/android-demo/ARCORE_CLOUD_SETUP.md. -->
-        <meta-data
-            android:name="com.google.android.ar.API_KEY"
-            android:value="${arcoreApiKey}" />
-
-        <!-- FileProvider — surfaces app-private external storage (notably
-             `getExternalFilesDir("ar-recordings")`) as content:// URIs for
-             ACTION_SEND share intents. Used by ARRecordPlaybackDemo's
-             Share button. The authority is namespaced with `.fileprovider`
-             so it never collides with other modules' providers. -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
-
+        <!-- Main Launcher Activity -->
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode"
             android:exported="true"
-            android:windowSoftInputMode="adjustResize">
+            android:theme="@style/Theme.SceneViewDemo">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
-            <!--
-                Deep-link entry: scan a QR code on sceneview.github.io / README /
-                docs and land directly on the matching demo screen.
-                See website-static/.well-known/README.md for the verification
-                state and follow-up steps.
-            -->
-
-            <!-- Custom scheme — works on every install, no verification needed. -->
-            <intent-filter android:label="Open in SceneView">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="sceneview" android:host="demo" />
-            </intent-filter>
-
-            <!--
-                Verified App-Link over HTTPS — pairs with
-                `website-static/.well-known/assetlinks.json`, which lists the
-                Play App Signing SHA-256 and the upload key.
-
-                Scope, deliberately narrow (#3366): host `sceneview.github.io`
-                AND path prefix `/open`. Never widen this to a bare
-                `<data android:scheme="https" />` — a host-less https filter
-                makes the demo a candidate for every https link on the device
-                and it can win the chooser, stealing links (and taps) from
-                unrelated apps. `DeepLinkRouter.extractCandidate` applies the
-                same host + path check in code, so both layers must be
-                widened together or not at all.
-
-                Verification is expected to SUCCEED only for builds signed
-                with one of the two fingerprints in assetlinks.json (Play
-                Store installs, and local installs of a release build signed
-                with the upload keystore). `assembleDebug` is signed with the
-                default `~/.android/debug.keystore`, which is NOT listed, so
-                a debug install always reports an unverified domain — that is
-                normal, not a regression. The custom `sceneview://demo/<id>`
-                scheme above is the deep-link channel for debug/QA builds.
-
-                Check the state with `adb shell pm get-app-links
-                io.github.sceneview.demo`. To exercise the https link on a
-                debug build, opt the domain in by hand with
-                `pm set-app-links-user-selection` — the exact command, and the
-                expected output per build type, are in
-                website-static/.well-known/README.md.
-            -->
-            <intent-filter android:label="Open in SceneView" android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="sceneview.github.io" android:pathPrefix="/open" />
-            </intent-filter>
-
-            <!--
-                "Open with SceneView" (#3482) — a model file handed over by another app:
-                a file manager, Downloads, Drive, or the ChatGPT share sheet.
-
-                3MF is the reason this exists. Ask ChatGPT for a 3D print and it
-                produces a `.3mf`; on Android nothing opened one in 3D, let alone in
-                AR. GLB/glTF ride along because a viewer that opens the exotic format
-                and not the standard one makes no sense to a user.
-
-                THREE filters, because Android's file typing is three different
-                unreliable signals and a share sheet uses whichever it feels like:
-
-                1. By MIME type — the correct, declared route. `model/3mf` is the
-                   registered type; the long `vnd.ms-package...` one is what the 3MF
-                   consortium's own OPC content type is, and what Windows-authored
-                   files carry.
-                2. By MIME type with `android:host="*"` — required for `content://`
-                   URIs, where there is no file name to match a pattern against.
-                3. By path pattern on `application/octet-stream` and `*/*` — the case
-                   that actually happens. Most senders label a `.3mf` as
-                   octet-stream, so the EXTENSION is the only signal left. The
-                   pattern must be spelled once per case combination
-                   (`pathPattern` is literal, not case-insensitive) and per scheme.
-
-                `OpenedModelIntent.looksLikeModel` applies the same name-or-MIME test
-                in code, so a file that slips through a broad `*/*` filter is dropped
-                there instead of failing to load with no explanation. Both layers must
-                be widened together or not at all.
-            -->
-            <intent-filter android:label="@string/open_model_filter_label">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:scheme="file" />
-                <data android:mimeType="model/3mf" />
-                <data android:mimeType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />
-                <data android:mimeType="model/gltf-binary" />
-                <data android:mimeType="model/gltf+json" />
-                <data android:mimeType="model/stl" />
-                <data android:mimeType="model/x.stl-ascii" />
-                <data android:mimeType="model/x.stl-binary" />
-                <data android:mimeType="application/sla" />
-                <data android:mimeType="application/vnd.ms-pki.stl" />
-                <data android:mimeType="model/obj" />
-                <data android:mimeType="application/x-ply" />
-            </intent-filter>
-
-            <intent-filter android:label="@string/open_model_filter_label">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:scheme="file" />
-                <data android:host="*" />
-                <data android:mimeType="application/octet-stream" />
-                <data android:mimeType="*/*" />
-                <data android:pathPattern=".*\\.3mf" />
-                <data android:pathPattern=".*\\.3MF" />
-                <data android:pathPattern=".*\\.glb" />
-                <data android:pathPattern=".*\\.GLB" />
-                <data android:pathPattern=".*\\.gltf" />
-                <data android:pathPattern=".*\\.GLTF" />
-                <data android:pathPattern=".*\\.stl" />
-                <data android:pathPattern=".*\\.STL" />
-                <data android:pathPattern=".*\\.obj" />
-                <data android:pathPattern=".*\\.OBJ" />
-                <data android:pathPattern=".*\\.ply" />
-                <data android:pathPattern=".*\\.PLY" />
-            </intent-filter>
-
-            <!--
-                Share sheet: "Share → SceneView" from ChatGPT, Files or Drive. Same
-                type list as the VIEW filter above; the URI arrives as EXTRA_STREAM.
-            -->
-            <intent-filter android:label="@string/open_model_filter_label">
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="model/3mf" />
-                <data android:mimeType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />
-                <data android:mimeType="model/gltf-binary" />
-                <data android:mimeType="model/gltf+json" />
-                <data android:mimeType="model/stl" />
-                <data android:mimeType="model/x.stl-ascii" />
-                <data android:mimeType="model/x.stl-binary" />
-                <data android:mimeType="application/sla" />
-                <data android:mimeType="application/vnd.ms-pki.stl" />
-                <data android:mimeType="model/obj" />
-                <data android:mimeType="application/x-ply" />
-                <data android:mimeType="application/octet-stream" />
-            </intent-filter>
         </activity>
 
-        <!--
-            Test-only host for `createComposeRule()` (#3410). Robolectric-hosted
-            compose-rule tests (DemoScaffold*BandTest, DemoBackgroundRoleTest, …)
-            launch this bare `androidx.activity.ComponentActivity` by explicit
-            component name via `ActivityScenario`. It is normally supplied by
-            `androidx.compose.ui:ui-test-manifest` on `debugImplementation`, but
-            that dependency's manifest fragment only reaches the resource-linked
-            package AGP builds for `testDebugUnitTest` — `testReleaseUnitTest`
-            links its unit-test resource package from the `release` variant's own
-            implementation graph, which never sees a `debugImplementation`
-            dependency, so every compose-rule unit test failed with "Unable to
-            resolve activity ... ComponentActivity" in the release variant only,
-            and CI never ran that variant to notice (`verifyRoborazziDebug` is
-            debug-only). Declaring the same entry here — main manifest, shipped
-            in every build type — puts it in both variants' real manifest and
-            resource-link pipeline. It has no launcher intent-filter and nothing
-            in the app calls it, so it never appears as an entry point.
-            `exported="false"`: `ActivityScenario`'s launch is an explicit intent
-            from inside the app's own process/package, which Android resolves
-            against non-exported components too — exported is only needed for a
-            *different* package to target this activity, which nothing
-            legitimate has a reason to do. Verified both `testDebugUnitTest` and
-            `testReleaseUnitTest` still resolve it with `exported="false"`.
-        -->
+        <!-- Debug-only harness for instrumentation tests. Launches a single demo composable
+             directly via an intent extra, bypassing the home list / navigation stack. Not
+             declared in src/main so release builds never ship it. See DemoHostActivity.kt. -->
         <activity
-            android:name="androidx.activity.ComponentActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+            android:name=".DemoHostActivity"
+            android:exported="true"
+            android:theme="@style/Theme.SceneViewDemo" />
+
     </application>
 </manifest>
