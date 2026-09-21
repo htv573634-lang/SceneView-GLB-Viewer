@@ -112,11 +112,6 @@ data class DemoEntry(
  * category holds at least one demo (a header with nothing under it is a lie),
  * and [DemoEntry.order] keeps a category's demos contiguous (a section that
  * restarts further down the grid is not a section).
- *
- * The nine keys replace the six that shipped until #2239. The old set put 33 of
- * 53 cards behind a single "Augmented Reality" chip, which is what made the
- * catalogue unnavigable: AR is not one subject, it is placement, tracking,
- * scene understanding and anchors — four different ARCore API families.
  */
 object DemoCategory {
     /** Load something and watch it — the first thing a newcomer opens. */
@@ -131,18 +126,6 @@ object DemoCategory {
     /** Touch the scene — camera manipulators, picking, node gestures. */
     const val INTERACTION = "Interaction"
 
-    /** Put virtual content in the real room. */
-    const val AR_PLACEMENT = "AR Placement"
-
-    /** Track a subject — faces, images, bodies, hands. */
-    const val AR_TRACKING = "AR Tracking"
-
-    /** Read the room — depth, point clouds, meshes, semantics. */
-    const val AR_UNDERSTANDING = "AR Understanding"
-
-    /** Anchors that outlive the frame — cloud, geospatial, collaborative. */
-    const val AR_ANCHORS = "AR Anchors"
-
     /** The plumbing around the renderer — audio, capture, recording, debug. */
     const val PLATFORM = "Platform"
 }
@@ -153,54 +136,13 @@ val DEMO_CATEGORIES = listOf(
     DemoCategory.GEOMETRY_MATERIALS,
     DemoCategory.RENDERING,
     DemoCategory.INTERACTION,
-    DemoCategory.AR_PLACEMENT,
-    DemoCategory.AR_TRACKING,
-    DemoCategory.AR_UNDERSTANDING,
-    DemoCategory.AR_ANCHORS,
     DemoCategory.PLATFORM,
 )
 
 /**
- * The sections whose demos are AR demos.
- *
- * Before #2239 this was a single equality test against one `AUGMENTED_REALITY`
- * category. The regroup split AR across four sections, so every "is this an AR
- * demo?" question now goes through [isArDemo] rather than re-listing the four
- * keys at each call site.
- */
-val AR_CATEGORIES: Set<String> = setOf(
-    DemoCategory.AR_PLACEMENT,
-    DemoCategory.AR_TRACKING,
-    DemoCategory.AR_UNDERSTANDING,
-    DemoCategory.AR_ANCHORS,
-)
-
-/**
- * AR demos that are deliberately filed outside [AR_CATEGORIES].
- *
- * `ar-record-playback` and `ar-rerun` sit under [DemoCategory.PLATFORM] because
- * their subject is capture and replay tooling — the plumbing around the session,
- * not what the session sees. They still open an ARCore session, so anything that
- * enumerates AR demos (the AR View tab's list, the replay harness) has to include
- * them or it silently drops two demos that need the AR device path.
- *
- * Keep this list empty if you can. It exists because a demo's *section* answers
- * "where does a user look for this" and that is not always the same question as
- * "does this need ARCore".
- */
-private val AR_DEMOS_OUTSIDE_AR_SECTIONS: Set<String> = setOf(
-    "ar-record-playback",
-    "ar-rerun",
-)
-
-/** Whether this demo runs on ARCore — see [AR_CATEGORIES]. */
-val DemoEntry.isArDemo: Boolean
-    get() = category in AR_CATEGORIES || id in AR_DEMOS_OUTSIDE_AR_SECTIONS
-
-/**
  * Maps a stable category key to its display-name resource ID.
  * Unknown keys fall back to [R.string.category_viewer] (safe default — never
- * surfaces a raw key like "AR Understanding" to the user).
+ * surfaces a raw key to the user).
  */
 @StringRes
 fun categoryDisplayNameRes(category: String): Int = when (category) {
@@ -208,10 +150,6 @@ fun categoryDisplayNameRes(category: String): Int = when (category) {
     DemoCategory.GEOMETRY_MATERIALS -> R.string.category_geometry_materials
     DemoCategory.RENDERING -> R.string.category_rendering
     DemoCategory.INTERACTION -> R.string.category_interaction
-    DemoCategory.AR_PLACEMENT -> R.string.category_ar_placement
-    DemoCategory.AR_TRACKING -> R.string.category_ar_tracking
-    DemoCategory.AR_UNDERSTANDING -> R.string.category_ar_understanding
-    DemoCategory.AR_ANCHORS -> R.string.category_ar_anchors
     DemoCategory.PLATFORM -> R.string.category_platform
     else -> R.string.category_viewer
 }
