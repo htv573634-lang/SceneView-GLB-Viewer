@@ -6,45 +6,6 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
-// Resolve store secrets once, at android-block scope, so both `defaultConfig`
-// (which injects them into the manifest / BuildConfig) and the release secret
-// guard below (#1915) can see the same resolved values.
-//
-// Each key is read from one of:
-//   1. its environment variable (CI / store-bound builds)
-//   2. repo-root local.properties (developer machines)
-//   3. fallback empty string (the feature stays disabled at runtime — and the
-//      #1915 release guard refuses to ship a store APK in that state)
-def loadFromLocalProperties = { String propertyName ->
-    def localPropsFile = rootProject.file("local.properties")
-    if (!localPropsFile.exists()) {
-        return ""
-    }
-    def localProps = new Properties()
-    localPropsFile.withInputStream { localProps.load(it) }
-    return localProps.getProperty(propertyName, "")
-}
-
-// ARCORE_API_KEY env var -> local.properties `ARCORE_API_KEY`. Injected into
-// AndroidManifest.xml as the `arcoreApiKey` placeholder. Empty => Streetscape /
-// Geospatial / Cloud Anchors stay disabled via the demo's `hasArcoreApiKey`
-// check. See samples/android-demo/ARCORE_CLOUD_SETUP.md to provision your own key.
-def arcoreApiKey = System.getenv("ARCORE_API_KEY") ?: ""
-if (arcoreApiKey.isEmpty()) {
-    arcoreApiKey = loadFromLocalProperties("ARCORE_API_KEY")
-}
-
-// SKETCHFAB_API_KEY env var -> local.properties `sketchfab.api.key`. Injected
-// into BuildConfig so SketchfabService can authenticate against
-// api.sketchfab.com. Empty => Sketchfab features stay disabled
-// (SketchfabConfig.apiKey returns null, the service throws MissingApiKey).
-// TODO V1.1: route requests via a backend proxy so end-users never see
-// the master key in the APK. See SketchfabConfig.kt.
-def sketchfabApiKey = System.getenv("SKETCHFAB_API_KEY") ?: ""
-if (sketchfabApiKey.isEmpty()) {
-    sketchfabApiKey = loadFromLocalProperties("sketchfab.api.key")
-}
-
 android {
     namespace = "io.github.sceneview.demo"
 
@@ -58,7 +19,6 @@ android {
 
     compileSdk 37
 
-
     defaultConfig {
         applicationId "io.github.sceneview.demo"
         minSdk 28
@@ -67,10 +27,6 @@ android {
         versionName project.hasProperty('versionName') ? project.property('versionName') : "4.37.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-
-        // The key MUST NEVER be committed — see the resolution block above.
-        manifestPlaceholders["arcoreApiKey"] = arcoreApiKey
-        buildConfigField "String", "SKETCHFAB_API_KEY", "\"${sketchfabApiKey}\""
     }
 
     signingConfigs {
@@ -123,9 +79,8 @@ android {
         // them in the APK only wastes CPU. `.glb` and `.hdr` stay compressible:
         // the demo GLBs are Draco + WebP packed and the HDRs are RGBE, both of
         // which the APK zip stage still shrinks meaningfully.
-        // `.task` is the MediaPipe bundle (a ZIP that MediaPipe memory-maps at
-        // runtime) — re-compressing it in the APK breaks `createFromOptions`.
-        noCompress 'filamat', 'ktx', 'task'
+        // (Removed 'task' as MediaPipe is no longer included)
+        noCompress 'filamat', 'ktx'
     }
     packaging {
         resources {
@@ -178,57 +133,6 @@ androidComponents {
     }
 }
 
-// Build-time fail-loud guard for store secrets (#1915).
-//
-// An empty SKETCHFAB_API_KEY / ARCORE_API_KEY compiles silently — Gradle is
-// happy with `""` — and ships a store APK whose Sketchfab carousels are
-// invisible and whose Streetscape / Geospatial / Cloud Anchor demos are
-// disabled, with nothing surfacing the cause. That is the exact silent-fail
-// class that caused #1909 (empty carousels on Play Store for weeks).
-//
-// Refuse to assemble a RELEASE variant when either secret is empty. Debug
-// builds stay permissive — developers without the keys still need to compile.
-// Forks / PRs from forks (no access to org secrets) opt out by setting
-// `SV_ALLOW_MISSING_SECRETS=1` in the environment, or pass
-// `-PSV_ALLOW_MISSING_SECRETS=1` on the Gradle command line.
-//
-// AGP 9 removed the legacy `android { applicationVariants }` container this used
-// to iterate, so the guard now hangs off the release assemble task by name. This
-// module declares no product flavors, so `assembleRelease` IS the release
-// variant's assemble task — the same task `variant.assembleProvider` returned.
-def allowMissingStoreSecrets = System.getenv("SV_ALLOW_MISSING_SECRETS") == "1" ||
-        (project.hasProperty("SV_ALLOW_MISSING_SECRETS") &&
-                project.property("SV_ALLOW_MISSING_SECRETS").toString() == "1")
-tasks.matching { it.name == "assembleRelease" }.configureEach { assembleTask ->
-    assembleTask.doFirst {
-        if (allowMissingStoreSecrets) {
-            logger.warn("⚠️  SV_ALLOW_MISSING_SECRETS=1 — skipping release secret guard (#1915).")
-            return
-        }
-        def missing = []
-        if (sketchfabApiKey == null || sketchfabApiKey.trim().isEmpty()) {
-            missing << "SKETCHFAB_API_KEY"
-        }
-        if (arcoreApiKey == null || arcoreApiKey.trim().isEmpty()) {
-            missing << "ARCORE_API_KEY"
-        }
-        if (!missing.isEmpty()) {
-            throw new GradleException(
-                    "Release build refusing to ship without store secrets: " +
-                    "${missing.join(', ')}.\n" +
-                    "  An empty key compiles silently and ships a store APK with\n" +
-                    "  invisible Sketchfab carousels / disabled AR Geospatial demos\n" +
-                    "  (the #1909 silent-fail class).\n" +
-                    "  Fix: set the missing secret(s) as environment variables\n" +
-                    "  (CI: GitHub Secrets), or in the repo-root local.properties\n" +
-                    "  (SKETCHFAB_API_KEY -> sketchfab.api.key, ARCORE_API_KEY -> ARCORE_API_KEY).\n" +
-                    "  Forks without org secrets: pass -PSV_ALLOW_MISSING_SECRETS=1\n" +
-                    "  or export SV_ALLOW_MISSING_SECRETS=1 to override.")
-        }
-        logger.lifecycle("✅ Release secret guard (#1915): SKETCHFAB_API_KEY + ARCORE_API_KEY present.")
-    }
-}
-
 // AGP 9 ships built-in Kotlin support, so `org.jetbrains.kotlin.android` is gone
 // and with it the `android { kotlinOptions { } }` block. The Kotlin JVM target
 // now lives in the top-level `kotlin { }` extension AGP registers itself.
@@ -256,61 +160,8 @@ dependencies {
     // shipping it in debug only avoids bundling the inspector into release APKs.
     debugImplementation libs.androidx.compose.ui.tooling
 
-    // SceneView — 3D + AR
+    // SceneView — 3D (AR module removed)
     implementation project(":sceneview")
-    implementation project(":arsceneview")
-
-    // Google Play In-App Updates — Play Core deps come via :samples:common
-    // (`api libs.play.app.update*`). Manager + banner live in
-    // `io.github.sceneview.sample.common.update.*`.
-
-    // Sketchfab API client — OkHttp for network, kotlinx-serialization for JSON.
-    // Used by io.github.sceneview.demo.sketchfab.SketchfabService to stream
-    // models from api.sketchfab.com instead of bundling GLBs in the APK.
-    // okhttp-coroutines provides Call.executeAsync(): cancelling the calling
-    // coroutine aborts the socket, so a re-typed Explore search never stacks
-    // zombie requests behind the debounce (#2644).
-    implementation libs.okhttp
-    implementation libs.okhttp.coroutines
-    implementation libs.kotlinx.serialization.json
-
-    // Google Fused Location Provider — required by ARCore Geospatial mode
-    // (Config.GeospatialMode.ENABLED) used by ARStreetscapeDemo. Without this
-    // dependency on the classpath, Session.configure() throws an
-    // IllegalStateException complaining about missing FLP classes and the
-    // Streetscape demo renders a black screen.
-    implementation libs.play.services.location
-
-    // ML Kit Object Detection — bundled model so ARMLObjectLabelDemo works
-    // offline. The default options classify generic categories (Home good,
-    // Fashion good, Food, Place, Plant). For finer labels callers can plug
-    // in a custom TFLite model via ObjectDetectorOptions / CustomObjectDetectorOptions.
-    // See ARMLObjectLabelDemo (#1737).
-    implementation libs.mlkit.object.detection
-
-    // ML Kit GenAI Prompt API — Gemini Nano on-device for the Point & Ask demo.
-    // Zero bundled weights (the model lives in the system AICore app); availability
-    // is runtime-gated per device and the demo degrades honestly when AICore is
-    // absent (every emulator). See PointAndAskDemo / AskEngine (#2648).
-    implementation libs.mlkit.genai.prompt
-
-    // MediaPipe Tasks Vision — on-device Pose Landmarker for the AR Body Tracker demo.
-    // ARCore has no native body-tracking API, so the demo feeds the AR CPU camera image
-    // to MediaPipe and projects the 33 image-space landmarks onto SceneView's 17
-    // ARKit-parity Joint enum. The .task model is bundled in src/main/assets. Demo-only
-    // dependency — the published arsceneview artifact carries no MediaPipe code, just the
-    // renderer-agnostic BodyPose / Joint value types. See ARBodyTrackerDemo (#1763).
-    //
-    // MediaPipe's tasks-vision POM declares `com.google.auto.value:auto-value`
-    // (the *full* annotation processor, not just `-annotations`) as a regular
-    // runtime dependency. AutoValue is compile-time-only — it pulls a shaded
-    // JavaPoet that references compile-time-only `javax.lang.model.**` JDK
-    // classes. On the release minify classpath R8 full-mode promotes those
-    // missing classes to a hard error, failing `minifyReleaseWithR8` and the
-    // Play Store deploy. Exclude it — it is never used at runtime (#2106).
-    implementation(libs.mediapipe.tasks.vision) {
-        exclude group: 'com.google.auto.value', module: 'auto-value'
-    }
 
     // Screenshot testing (Roborazzi — JVM, no emulator needed)
     testImplementation libs.robolectric
@@ -327,25 +178,8 @@ dependencies {
     // every existing check: a Roborazzi golden only fails if a human looks at
     // the diff, and the overlap it captures is 4 dp.
     testImplementation libs.androidx.compose.ui.test.junit4
-    // No `androidx.compose.ui:ui-test-manifest` dependency here (#3410): that
-    // artifact's sole content is a manifest declaring the bare
-    // `ComponentActivity` `createComposeRule()` launches into, and it is
-    // documented to be added `debugImplementation`-only. That works for
-    // `testDebugUnitTest` but not `testReleaseUnitTest` — AGP links the
-    // release variant's unit-test resource package from the release
-    // implementation graph, which a `debugImplementation` dependency never
-    // reaches, so every compose-rule Robolectric test failed to resolve
-    // `ComponentActivity` in the release variant only (CI never ran it to
-    // notice: `verifyRoborazziDebug` is debug-only). The same manifest entry
-    // is declared directly in `src/main/AndroidManifest.xml` instead, so it
-    // reaches both variants' real manifest/resource-link pipeline — see the
-    // comment there.
 
     testImplementation libs.kotlin.coroutines.test
-    // Local HTTP double for SketchfabService's cooperative-cancellation test
-    // (#2644) — proves an aborted search releases its socket instead of
-    // running to completion behind the debounce.
-    testImplementation libs.mockwebserver3
 
     // UiAutomator-based interaction tests. Drives the real demo app process through
     // DemoHostActivity (debug flavour) — no ComposeTestRule, no Filament thread-adoption
