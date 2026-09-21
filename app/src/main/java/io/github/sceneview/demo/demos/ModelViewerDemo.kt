@@ -1,9 +1,9 @@
 package io.github.sceneview.demo.demos
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -36,7 +36,6 @@ import io.github.sceneview.demo.DemoScaffold
 import io.github.sceneview.demo.DockItem
 import io.github.sceneview.demo.LoadingScrim
 import io.github.sceneview.demo.R
-import io.github.sceneview.demo.common.rememberModelDemoEnvironment
 import io.github.sceneview.demo.rememberFirstFrameState
 import io.github.sceneview.demo.theme.SceneViewTokens
 import io.github.sceneview.demo.ui.viewer.AnimationBar
@@ -56,7 +55,7 @@ import io.github.sceneview.rememberModelLoader
  *
  * Open APK
  *     ↓
- * Temporary bundled GLB is displayed
+ * Empty viewer
  *     ↓
  * Open GLB
  *     ↓
@@ -64,7 +63,7 @@ import io.github.sceneview.rememberModelLoader
  *     ↓
  * User selects a GLB
  *     ↓
- * Selected GLB replaces the temporary model
+ * Selected GLB is displayed
  *
  * Features:
  * - SceneView rendering
@@ -73,6 +72,8 @@ import io.github.sceneview.rememberModelLoader
  * - Lighting / Environment controls
  * - Animation playback
  * - Native Android file picker
+ *
+ * No bundled model is required.
  */
 @Composable
 fun ModelViewerDemo(onBack: () -> Unit) {
@@ -101,23 +102,19 @@ fun ModelViewerDemo(onBack: () -> Unit) {
     }
 
     // -------------------------------------------------------------------------
-    // Model
+    // Selected GLB model
     //
-    // One temporary bundled model is used until the user opens a GLB.
-    // key(selectedUri) gives the model-loading composable a stable composition
-    // scope whenever the selected file changes.
+    // No bundled/demo model is used.
+    // The viewer remains empty until the user selects a GLB.
+    // key(selectedUri) creates a fresh loading scope whenever the selected
+    // file changes.
     // -------------------------------------------------------------------------
 
-    val activeModelInstance = key(selectedUri) {
-        if (selectedUri == null) {
+    val activeModelInstance = selectedUri?.let { uri ->
+        key(uri) {
             rememberModelInstance(
                 modelLoader = modelLoader,
-                assetPath = "models/khronos_damaged_helmet.glb"
-            )
-        } else {
-            rememberModelInstance(
-                modelLoader = modelLoader,
-                uri = selectedUri
+                uri = uri
             )
         }
     }
@@ -260,7 +257,7 @@ fun ModelViewerDemo(onBack: () -> Unit) {
     ) {
         rememberHDREnvironment(
             environmentLoader = environmentLoader,
-            hdrFileLocation = requestedEnvironment.assetPath,
+            assetFileLocation = requestedEnvironment.assetPath,
             createSkybox = showEnvironment
         )
     }
@@ -327,7 +324,6 @@ fun ModelViewerDemo(onBack: () -> Unit) {
 
         onBack = {
             if (selectedUri != null) {
-                // First back action returns to the temporary placeholder.
                 selectedUri = null
                 animationBarOpen = false
                 animationProgress = 0f
@@ -473,18 +469,12 @@ fun ModelViewerDemo(onBack: () -> Unit) {
                 environment =
                     viewerEnvironment,
 
-                // SceneView's default manipulator provides:
-                // - One-finger rotation
-                // - Pinch zoom
-                // - Pan
                 cameraManipulator =
                     cameraManipulator
             ) {
                 activeModelInstance?.let { instance ->
                     io.github.sceneview.node.ModelNode(
                         modelInstance = instance,
-
-                        // Animation is controlled by AnimationBar.
                         autoAnimate = false
                     )
                 }
@@ -492,7 +482,8 @@ fun ModelViewerDemo(onBack: () -> Unit) {
 
             LoadingScrim(
                 loading =
-                    activeModelInstance == null,
+                    selectedUri != null &&
+                        activeModelInstance == null,
 
                 label =
                     stringResource(
