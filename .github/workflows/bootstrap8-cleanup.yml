@@ -1,0 +1,55 @@
+name: Bootstrap 8 - Safe Cleanup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remove unnecessary folders
+        run: |
+          set -e
+
+          # Remove AR module completely
+          rm -rf arsceneview
+
+          # Remove tests
+          rm -rf app/src/androidTest
+          rm -rf sceneview/src/androidTest
+          rm -rf sceneview-core/src/commonTest
+          rm -rf sceneview-core/src/jsTest
+          rm -rf sceneview-core/src/iosMain
+          rm -rf sceneview-core/src/jsMain
+
+          # Remove demo features we don't need
+          rm -rf app/src/main/java/io/github/sceneview/demo/feedback
+          rm -rf app/src/main/java/io/github/sceneview/demo/sketchfab
+          rm -rf app/src/main/java/io/github/sceneview/demo/ai
+
+          # Remove documentation
+          find . -type f \( \
+            -name "*.md" -o \
+            -name "LICENSE" -o \
+            -name "NOTICE" -o \
+            -name "CHANGELOG.md" \
+          \) -delete || true
+
+      - name: Count remaining files
+        run: |
+          echo "Remaining files:"
+          find . -type f | wc -l
+
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .
+          git commit -m "Bootstrap 8: Safe cleanup" || echo "No changes"
+          git push
